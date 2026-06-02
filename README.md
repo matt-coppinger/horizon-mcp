@@ -11,9 +11,8 @@ MCP (Model Context Protocol) server for [Omnissa Horizon](https://www.omnissa.co
 ## Installation
 
 ```bash
-# Clone and install
-git clone <repo-url>
-cd HorizonMCP
+git clone https://github.com/matt-coppinger/horizon-mcp.git
+cd horizon-mcp
 uv venv && uv pip install -e .
 ```
 
