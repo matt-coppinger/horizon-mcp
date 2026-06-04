@@ -1,69 +1,56 @@
 """Help Desk tools: session diagnostics, performance data, remote assistance."""
+import asyncio
 from typing import Annotated
 
 from fastmcp import FastMCP
 
 from ..client import api_get, api_post
 
+_DIAGNOSTIC_ASPECTS = {
+    "logon_timing": ("/helpdesk/v3/logon-timing/logon-segment", "dict"),
+    "display_performance": ("/helpdesk/v3/performance/display-protocol", "dict"),
+    "historical_performance": ("/helpdesk/v2/performance/historical-data", "dict"),
+    "processes": ("/helpdesk/v2/performance/process", "list"),
+    "remote_applications": ("/helpdesk/v2/performance/remote-application", "list"),
+}
+
 
 def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
-    async def get_session_logon_timing(
-        session_id: Annotated[str, "Session ID to retrieve logon timing data for"],
+    async def diagnose_session(
+        session_id: Annotated[str, "Session ID to diagnose"],
+        aspects: Annotated[
+            list[str] | None,
+            "Diagnostic data to retrieve. Options: logon_timing, display_performance, "
+            "historical_performance, processes, remote_applications. "
+            "Defaults to all aspects.",
+        ] = None,
     ) -> dict:
-        """Get detailed logon timing breakdown for a user session.
+        """Retrieve diagnostic information for a user session in a single call.
 
-        Returns timing data for each phase of the logon process (broker, agent,
-        protocol, profile load, etc.) to help diagnose slow logon issues.
+        Fetches any combination of: logon timing breakdown, real-time display protocol
+        metrics, 15-minute historical performance, running processes, and active remote
+        applications. Results are keyed by aspect name; a failed aspect returns its error
+        message as a string rather than failing the whole call.
+
+        Replaces: get_session_logon_timing, get_session_display_performance,
+        get_session_historical_performance, get_session_processes,
+        get_session_remote_applications.
         """
-        return await api_get(
-            "/helpdesk/v3/logon-timing/logon-segment",
-            params={"session_id": session_id},
-        )
-
-    @mcp.tool()
-    async def get_session_display_performance(
-        session_id: Annotated[str, "Session ID"],
-    ) -> dict:
-        """Get real-time display protocol performance metrics for a session.
-
-        Returns bandwidth, FPS, latency, and packet loss data for
-        PCoIP or BLAST Extreme protocol sessions.
-        """
-        return await api_get(
-            "/helpdesk/v3/performance/display-protocol",
-            params={"session_id": session_id},
-        )
-
-    @mcp.tool()
-    async def get_session_historical_performance(
-        session_id: Annotated[str, "Session ID"],
-    ) -> dict:
-        """Get historical performance data for a session over the last 15 minutes.
-
-        Returns time-series data for bandwidth, FPS, latency, and packet loss.
-        Useful for identifying intermittent performance issues.
-        """
-        return await api_get(
-            "/helpdesk/v2/performance/historical-data",
-            params={"session_id": session_id},
-        )
-
-    @mcp.tool()
-    async def get_session_processes(
-        session_id: Annotated[str, "Session ID"],
-    ) -> list:
-        """List processes running in a user's virtual desktop session.
-
-        Returns process names, IDs, CPU, and memory usage for
-        diagnosing performance issues or verifying application state.
-        """
-        result = await api_get(
-            "/helpdesk/v2/performance/process",
-            params={"session_id": session_id},
-        )
-        return result or []
+        selected = list(_DIAGNOSTIC_ASPECTS.keys()) if aspects is None else [
+            a for a in aspects if a in _DIAGNOSTIC_ASPECTS
+        ]
+        coros = [
+            api_get(_DIAGNOSTIC_ASPECTS[a][0], params={"session_id": session_id})
+            for a in selected
+        ]
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        empty = {"list": [], "dict": {}}
+        return {
+            aspect: (str(r) if isinstance(r, Exception) else (r or empty[_DIAGNOSTIC_ASPECTS[aspect][1]]))
+            for aspect, r in zip(selected, results)
+        }
 
     @mcp.tool()
     async def get_remote_assistance_ticket(
@@ -80,25 +67,11 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool()
-    async def get_session_remote_applications(
-        session_id: Annotated[str, "Session ID"],
-    ) -> list:
-        """List remote applications running in a session.
-
-        Returns application names and IDs for published application sessions.
-        """
-        result = await api_get(
-            "/helpdesk/v2/performance/remote-application",
-            params={"session_id": session_id},
-        )
-        return result or []
-
-    @mcp.tool()
     async def end_remote_application(
         session_id: Annotated[str, "Session ID"],
         application_id: Annotated[
             str,
-            "Application ID to terminate. Use get_session_remote_applications to find IDs.",
+            "Application ID to terminate. Use diagnose_session with aspects=['remote_applications'] to find IDs.",
         ],
     ) -> dict:
         """Terminate a specific remote application running in a session.
