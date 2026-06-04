@@ -39,9 +39,6 @@ def register(mcp: FastMCP) -> None:
         applications. Results are keyed by aspect name; a failed aspect returns its error
         message as a string rather than failing the whole call.
 
-        Replaces: get_session_logon_timing, get_session_display_performance,
-        get_session_historical_performance, get_session_processes,
-        get_session_remote_applications.
         """
         selected = list(_DIAGNOSTIC_ASPECTS) if aspects is None else list(aspects)
         unknown = [a for a in selected if a not in _DIAGNOSTIC_ASPECTS]

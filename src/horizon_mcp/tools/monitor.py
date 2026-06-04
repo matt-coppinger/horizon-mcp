@@ -51,9 +51,6 @@ def register(mcp: FastMCP) -> None:
         Results are keyed by component name. A failed component returns its error
         as a string rather than failing the whole call.
 
-        Replaces: get_health_metrics, list_connection_servers_health,
-        list_gateway_health, list_virtual_center_health, list_ad_domain_health,
-        list_farm_health.
         """
         selected = list(_HEALTH_ENDPOINTS) if components is None else list(components)
         unknown = [c for c in selected if c not in _HEALTH_ENDPOINTS]
@@ -98,9 +95,6 @@ def register(mcp: FastMCP) -> None:
         Results are keyed by scope name. A failed scope returns its error as a string
         rather than failing the whole call.
 
-        Replaces: list_desktop_pool_metrics, get_session_metrics,
-        get_machine_count_metrics, get_system_metrics, get_rds_server_count_metrics,
-        get_license_usage_metrics.
         """
         selected = list(_METRICS_ENDPOINTS) if scope is None else list(scope)
         unknown = [s for s in selected if s not in _METRICS_ENDPOINTS]

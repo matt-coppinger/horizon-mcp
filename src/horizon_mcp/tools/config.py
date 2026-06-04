@@ -84,7 +84,6 @@ def register(mcp: FastMCP) -> None:
     ) -> list:
         """List image management streams, versions, or tags.
 
-        Replaces: list_im_streams, list_im_versions, list_im_tags.
         """
         paths: dict[str, str] = {
             "streams": "/config/v1/im-streams",
