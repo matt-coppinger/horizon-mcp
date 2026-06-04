@@ -149,7 +149,7 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `list_ic_domain_accounts` | Instant clone domain accounts |
 | `list_image_management` | Image management streams, versions, or tags (pass `resource`: `streams`\|`versions`\|`tags`) |
 | `list_gateways` | Registered UAGs |
-| `validate_connection_server_backup` | Trigger Connection Server backup |
+| `trigger_connection_server_backup` | Trigger Connection Server backup |
 
 ### Entitlements
 | Tool | Description |
