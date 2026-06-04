@@ -17,8 +17,7 @@ def register(mcp: FastMCP) -> None:
         Returns which users and groups are entitled to each pool.
         Use get_pool_entitlement for a specific pool's details.
         """
-        base = f"/entitlements/v1/{'desktop' if pool_type == 'desktop' else 'application'}-pools"
-        return await api_get(base) or []
+        return await api_get(f"/entitlements/v1/{pool_type}-pools") or []
 
     @mcp.tool()
     async def get_pool_entitlement(
@@ -26,8 +25,7 @@ def register(mcp: FastMCP) -> None:
         pool_type: Annotated[Literal["desktop", "application"], "Type of pool"],
     ) -> dict:
         """Get the users and groups entitled to access a specific pool."""
-        base = f"/entitlements/v1/{'desktop' if pool_type == 'desktop' else 'application'}-pools"
-        return await api_get(f"{base}/{pool_id}")
+        return await api_get(f"/entitlements/v1/{pool_type}-pools/{pool_id}")
 
     @mcp.tool()
     async def set_pool_entitlements(
@@ -50,12 +48,11 @@ def register(mcp: FastMCP) -> None:
         CAUTION: action='remove' immediately revokes access for the specified principals.
         Always confirm with the user before using replace or remove.
         """
-        base = f"/entitlements/v1/{'desktop' if pool_type == 'desktop' else 'application'}-pools"
         spec = [{"id": pool_id, "ad_user_or_group_ids": ad_user_or_group_ids}]
         if action == "add":
-            result = await api_post(base, spec)
+            result = await api_post(f"/entitlements/v1/{pool_type}-pools", spec)
         elif action == "replace":
-            result = await api_put(base, spec)
+            result = await api_put(f"/entitlements/v1/{pool_type}-pools", spec)
         else:
-            result = await api_delete(base, spec)
+            result = await api_delete(f"/entitlements/v1/{pool_type}-pools", spec)
         return result or {"success": True, "pool_id": pool_id, "action": action}

@@ -1,18 +1,23 @@
 """Help Desk tools: session diagnostics, performance data, remote assistance."""
 import asyncio
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 
 from ..client import api_get, api_post
 
-_DIAGNOSTIC_ASPECTS = {
+_DIAGNOSTIC_ASPECTS: dict[str, tuple[str, str]] = {
     "logon_timing": ("/helpdesk/v3/logon-timing/logon-segment", "dict"),
     "display_performance": ("/helpdesk/v3/performance/display-protocol", "dict"),
     "historical_performance": ("/helpdesk/v2/performance/historical-data", "dict"),
     "processes": ("/helpdesk/v2/performance/process", "list"),
     "remote_applications": ("/helpdesk/v2/performance/remote-application", "list"),
 }
+
+DiagnosticAspect = Literal[
+    "logon_timing", "display_performance", "historical_performance",
+    "processes", "remote_applications",
+]
 
 
 def register(mcp: FastMCP) -> None:
@@ -21,8 +26,8 @@ def register(mcp: FastMCP) -> None:
     async def diagnose_session(
         session_id: Annotated[str, "Session ID to diagnose"],
         aspects: Annotated[
-            list[str] | None,
-            "Diagnostic data to retrieve. Options: logon_timing, display_performance, "
+            list[DiagnosticAspect] | None,
+            "Diagnostic data to retrieve: logon_timing, display_performance, "
             "historical_performance, processes, remote_applications. "
             "Defaults to all aspects.",
         ] = None,
@@ -38,15 +43,18 @@ def register(mcp: FastMCP) -> None:
         get_session_historical_performance, get_session_processes,
         get_session_remote_applications.
         """
-        selected = list(_DIAGNOSTIC_ASPECTS.keys()) if aspects is None else [
-            a for a in aspects if a in _DIAGNOSTIC_ASPECTS
-        ]
+        selected = list(_DIAGNOSTIC_ASPECTS) if aspects is None else list(aspects)
+        unknown = [a for a in selected if a not in _DIAGNOSTIC_ASPECTS]
+        if unknown:
+            raise ValueError(
+                f"Unknown aspects: {unknown}. Valid options: {list(_DIAGNOSTIC_ASPECTS)}"
+            )
         coros = [
             api_get(_DIAGNOSTIC_ASPECTS[a][0], params={"session_id": session_id})
             for a in selected
         ]
         results = await asyncio.gather(*coros, return_exceptions=True)
-        empty = {"list": [], "dict": {}}
+        empty: dict[str, object] = {"list": [], "dict": {}}
         return {
             aspect: (str(r) if isinstance(r, Exception) else (r or empty[_DIAGNOSTIC_ASPECTS[aspect][1]]))
             for aspect, r in zip(selected, results)

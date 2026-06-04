@@ -1,6 +1,6 @@
 """Tests for consolidated helpdesk.diagnose_session tool."""
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from .conftest import MockFastMCP
 from horizon_mcp.tools import helpdesk
@@ -33,7 +33,6 @@ def test_diagnostic_aspects_have_paths_and_types():
 
 # ── diagnose_session ───────────────────────────────────────────────────────────
 
-@pytest.mark.asyncio
 async def test_diagnose_session_all_aspects_called(tools):
     call_count = 0
 
@@ -49,7 +48,6 @@ async def test_diagnose_session_all_aspects_called(tools):
     assert set(result.keys()) == set(_DIAGNOSTIC_ASPECTS.keys())
 
 
-@pytest.mark.asyncio
 async def test_diagnose_session_subset_of_aspects(tools):
     call_count = 0
 
@@ -68,7 +66,6 @@ async def test_diagnose_session_subset_of_aspects(tools):
     assert set(result.keys()) == {"logon_timing", "processes"}
 
 
-@pytest.mark.asyncio
 async def test_diagnose_session_partial_failure_returns_error_string(tools):
     async def fake_api_get(path, params=None):
         if "logon-segment" in path:
@@ -85,26 +82,14 @@ async def test_diagnose_session_partial_failure_returns_error_string(tools):
     assert result["display_performance"] == {"fps": 30}
 
 
-@pytest.mark.asyncio
-async def test_diagnose_session_unknown_aspects_are_ignored(tools):
-    call_count = 0
-
-    async def fake_api_get(path, params=None):
-        nonlocal call_count
-        call_count += 1
-        return {}
-
-    with patch("horizon_mcp.tools.helpdesk.api_get", side_effect=fake_api_get):
-        result = await tools["diagnose_session"](
+async def test_diagnose_session_unknown_aspects_raises(tools):
+    with pytest.raises(ValueError, match="Unknown aspects"):
+        await tools["diagnose_session"](
             session_id="sess-004",
             aspects=["logon_timing", "not_a_real_aspect"],
         )
 
-    assert call_count == 1
-    assert "not_a_real_aspect" not in result
 
-
-@pytest.mark.asyncio
 async def test_diagnose_session_passes_session_id_to_each_call(tools):
     received_params = []
 
@@ -118,7 +103,6 @@ async def test_diagnose_session_passes_session_id_to_each_call(tools):
     assert received_params == [{"session_id": "my-session-id"}]
 
 
-@pytest.mark.asyncio
 async def test_diagnose_session_none_result_returns_empty(tools):
     async def fake_api_get(path, params=None):
         return None

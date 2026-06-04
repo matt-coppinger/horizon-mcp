@@ -59,13 +59,10 @@ def register(mcp: FastMCP) -> None:
         await reset_client()
 
         return {
+            "SECURITY": "Copy access_token to HORIZON_ACCESS_TOKEN in your MCP client config, then clear it from the conversation. Treat both tokens as passwords.",
             "access_token": tokens["access_token"],
             "refresh_token": tokens.get("refresh_token"),
-            "note": (
-                "Token is now active for this server session. "
-                "Set HORIZON_ACCESS_TOKEN in your MCP client config to persist across restarts. "
-                "Treat both tokens as secrets."
-            ),
+            "note": "Token is now active for this server session. Restart the server after updating your MCP client config to persist it.",
         }
 
     @mcp.tool()

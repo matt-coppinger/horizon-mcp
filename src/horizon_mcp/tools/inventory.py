@@ -16,6 +16,8 @@ _MACHINE_ACTIONS = {
     "archive": ("/inventory/v1/machines/action/archive", "array"),
 }
 
+_FORCE_APPLICABLE_ACTIONS = {"shutdown", "restart"}
+
 
 def register(mcp: FastMCP) -> None:
 
@@ -39,7 +41,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_desktop_pool(
-        pool_id: Annotated[str, "Desktop pool ID"],
+        pool_id: Annotated[str, "Desktop pool ID — obtain from list_desktop_pools"],
     ) -> dict:
         """Get detailed configuration and status of a specific desktop pool."""
         return await api_get(f"/inventory/v1/desktop-pools/{pool_id}")
@@ -73,7 +75,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_machine(
-        machine_id: Annotated[str, "Machine ID"],
+        machine_id: Annotated[str, "Machine ID — obtain from list_machines"],
     ) -> dict:
         """Get detailed information about a specific machine."""
         return await api_get(f"/inventory/v1/machines/{machine_id}")
@@ -96,7 +98,8 @@ def register(mcp: FastMCP) -> None:
         ],
         force: Annotated[
             bool,
-            "Force the operation even if sessions are active (applies to shutdown and restart only)",
+            "Force the operation even if sessions are active. "
+            "Only applies to shutdown and restart — raises an error for other actions.",
         ] = False,
     ) -> dict:
         """Perform a bulk action on one or more machines.
@@ -114,6 +117,11 @@ def register(mcp: FastMCP) -> None:
         CAUTION: rebuild and reset are destructive and will discard unsaved user data.
         Always confirm with the user before calling these actions.
         """
+        if force and action not in _FORCE_APPLICABLE_ACTIONS:
+            raise ValueError(
+                f"force=True is only applicable to {sorted(_FORCE_APPLICABLE_ACTIONS)}, "
+                f"not '{action}'. Remove force=True or choose a different action."
+            )
         path, body_style = _MACHINE_ACTIONS[action]
         if body_style == "object":
             body: list | dict = {"machineIds": machine_ids, "forceOperation": force}
@@ -138,7 +146,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_rdsh_farm(
-        farm_id: Annotated[str, "Farm ID"],
+        farm_id: Annotated[str, "Farm ID — obtain from list_rdsh_farms"],
     ) -> dict:
         """Get detailed information about a specific RDS farm."""
         return await api_get(f"/inventory/v1/farms/{farm_id}")
@@ -159,7 +167,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_application_pool(
-        pool_id: Annotated[str, "Application pool ID"],
+        pool_id: Annotated[str, "Application pool ID — obtain from list_application_pools"],
     ) -> dict:
         """Get detailed information about a specific application pool."""
         return await api_get(f"/inventory/v1/application-pools/{pool_id}")
@@ -194,7 +202,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_session(
-        session_id: Annotated[str, "Session ID"],
+        session_id: Annotated[str, "Session ID — obtain from list_sessions"],
     ) -> dict:
         """Get detailed information about a specific user session."""
         return await api_get(f"/inventory/v1/sessions/{session_id}")
@@ -226,6 +234,8 @@ def register(mcp: FastMCP) -> None:
         CAUTION: This will close all running applications in the session.
         Unsaved data will be lost. Always confirm with the user before calling this.
         """
+        # Horizon API expects the session ID list as the POST body and
+        # forced as a URL query parameter (not a body field).
         result = await api_post(
             "/inventory/v1/sessions/action/logoff",
             session_ids,

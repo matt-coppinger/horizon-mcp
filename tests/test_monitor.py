@@ -40,7 +40,6 @@ def test_all_metrics_paths_start_with_monitor():
 
 # ── get_infrastructure_health ──────────────────────────────────────────────────
 
-@pytest.mark.asyncio
 async def test_get_infrastructure_health_all_components(tools):
     call_count = 0
 
@@ -56,7 +55,6 @@ async def test_get_infrastructure_health_all_components(tools):
     assert set(result.keys()) == set(_HEALTH_ENDPOINTS.keys())
 
 
-@pytest.mark.asyncio
 async def test_get_infrastructure_health_subset(tools):
     call_count = 0
 
@@ -72,7 +70,6 @@ async def test_get_infrastructure_health_subset(tools):
     assert set(result.keys()) == {"summary", "gateways"}
 
 
-@pytest.mark.asyncio
 async def test_get_infrastructure_health_partial_failure(tools):
     async def fake_api_get(path, params=None):
         if "health-metrics" in path:
@@ -86,27 +83,13 @@ async def test_get_infrastructure_health_partial_failure(tools):
     assert result["gateways"] == [{"ok": True}]
 
 
-@pytest.mark.asyncio
-async def test_get_infrastructure_health_unknown_components_ignored(tools):
-    call_count = 0
-
-    async def fake_api_get(path, params=None):
-        nonlocal call_count
-        call_count += 1
-        return []
-
-    with patch("horizon_mcp.tools.monitor.api_get", side_effect=fake_api_get):
-        result = await tools["get_infrastructure_health"](
-            components=["summary", "not_a_component"]
-        )
-
-    assert call_count == 1
-    assert "not_a_component" not in result
+async def test_get_infrastructure_health_unknown_components_raises(tools):
+    with pytest.raises(ValueError, match="Unknown components"):
+        await tools["get_infrastructure_health"](components=["summary", "not_a_component"])
 
 
 # ── get_metrics ────────────────────────────────────────────────────────────────
 
-@pytest.mark.asyncio
 async def test_get_metrics_all_scopes(tools):
     call_count = 0
 
@@ -122,7 +105,6 @@ async def test_get_metrics_all_scopes(tools):
     assert set(result.keys()) == set(_METRICS_ENDPOINTS.keys())
 
 
-@pytest.mark.asyncio
 async def test_get_metrics_subset(tools):
     call_count = 0
 
@@ -138,7 +120,6 @@ async def test_get_metrics_subset(tools):
     assert set(result.keys()) == {"sessions", "license"}
 
 
-@pytest.mark.asyncio
 async def test_get_metrics_none_result_returns_empty_dict(tools):
     async def fake_api_get(path, params=None):
         return None
@@ -149,7 +130,6 @@ async def test_get_metrics_none_result_returns_empty_dict(tools):
     assert result["sessions"] == {}
 
 
-@pytest.mark.asyncio
 async def test_get_metrics_partial_failure(tools):
     async def fake_api_get(path, params=None):
         if "sessions" in path:
@@ -161,3 +141,8 @@ async def test_get_metrics_partial_failure(tools):
 
     assert "timeout" in result["sessions"]
     assert result["pools"] == {"count": 5}
+
+
+async def test_get_metrics_unknown_scope_raises(tools):
+    with pytest.raises(ValueError, match="Unknown scopes"):
+        await tools["get_metrics"](scope=["sessions", "bad_scope"])

@@ -86,7 +86,7 @@ def register(mcp: FastMCP) -> None:
 
         Replaces: list_im_streams, list_im_versions, list_im_tags.
         """
-        paths = {
+        paths: dict[str, str] = {
             "streams": "/config/v1/im-streams",
             "versions": "/config/v1/im-versions",
             "tags": "/config/v1/im-tags",
@@ -101,12 +101,16 @@ def register(mcp: FastMCP) -> None:
         return await api_get("/config/v1/gateways") or []
 
     @mcp.tool()
-    async def validate_connection_server_backup(
+    async def trigger_connection_server_backup(
         server_ids: Annotated[
             list[str] | None,
             "Connection server IDs to back up. If omitted, all Connection Servers are backed up.",
         ] = None,
     ) -> dict:
-        """Initiate an immediate backup of one or more Connection Servers."""
+        """Initiate an immediate backup of one or more Connection Servers.
+
+        CAUTION: This triggers an active backup operation, not a validation check.
+        If no server_ids are provided, all Connection Servers are backed up.
+        """
         result = await api_post("/config/v1/connection-servers/action/backup", server_ids or [])
         return result or {"success": True}

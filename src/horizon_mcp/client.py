@@ -6,14 +6,8 @@ from typing import Any
 import httpx
 
 _client: httpx.AsyncClient | None = None
-_lock: asyncio.Lock | None = None
-
-
-def _get_lock() -> asyncio.Lock:
-    global _lock
-    if _lock is None:
-        _lock = asyncio.Lock()
-    return _lock
+# Module-level lock is safe in Python 3.10+ (no longer bound to a loop at construction).
+_lock = asyncio.Lock()
 
 
 async def get_client() -> httpx.AsyncClient:
@@ -21,7 +15,7 @@ async def get_client() -> httpx.AsyncClient:
     global _client
     if _client is not None and not _client.is_closed:
         return _client
-    async with _get_lock():
+    async with _lock:
         if _client is not None and not _client.is_closed:
             return _client
         base_url = os.environ.get("HORIZON_BASE_URL", "").rstrip("/")

@@ -1,6 +1,6 @@
 """Monitor tools: infrastructure health and metrics."""
 import asyncio
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 
@@ -24,14 +24,17 @@ _METRICS_ENDPOINTS: dict[str, str] = {
     "license": "/monitor/v1/licenses/usage-metrics",
 }
 
+HealthComponent = Literal["summary", "connection_servers", "gateways", "virtual_centers", "ad_domains", "farms"]
+MetricScope = Literal["pools", "sessions", "machines", "system", "rds_servers", "license"]
+
 
 def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_infrastructure_health(
         components: Annotated[
-            list[str] | None,
-            "Components to check. Options: summary, connection_servers, gateways, "
+            list[HealthComponent] | None,
+            "Components to check: summary, connection_servers, gateways, "
             "virtual_centers, ad_domains, farms. Defaults to all.",
         ] = None,
     ) -> dict:
@@ -52,9 +55,12 @@ def register(mcp: FastMCP) -> None:
         list_gateway_health, list_virtual_center_health, list_ad_domain_health,
         list_farm_health.
         """
-        selected = list(_HEALTH_ENDPOINTS.keys()) if components is None else [
-            c for c in components if c in _HEALTH_ENDPOINTS
-        ]
+        selected = list(_HEALTH_ENDPOINTS) if components is None else list(components)
+        unknown = [c for c in selected if c not in _HEALTH_ENDPOINTS]
+        if unknown:
+            raise ValueError(
+                f"Unknown components: {unknown}. Valid options: {list(_HEALTH_ENDPOINTS)}"
+            )
         results = await asyncio.gather(
             *[api_get(_HEALTH_ENDPOINTS[c]) for c in selected],
             return_exceptions=True,
@@ -74,8 +80,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def get_metrics(
         scope: Annotated[
-            list[str] | None,
-            "Metric scopes to retrieve. Options: pools, sessions, machines, system, "
+            list[MetricScope] | None,
+            "Metric scopes to retrieve: pools, sessions, machines, system, "
             "rds_servers, license. Defaults to all.",
         ] = None,
     ) -> dict:
@@ -96,9 +102,12 @@ def register(mcp: FastMCP) -> None:
         get_machine_count_metrics, get_system_metrics, get_rds_server_count_metrics,
         get_license_usage_metrics.
         """
-        selected = list(_METRICS_ENDPOINTS.keys()) if scope is None else [
-            s for s in scope if s in _METRICS_ENDPOINTS
-        ]
+        selected = list(_METRICS_ENDPOINTS) if scope is None else list(scope)
+        unknown = [s for s in selected if s not in _METRICS_ENDPOINTS]
+        if unknown:
+            raise ValueError(
+                f"Unknown scopes: {unknown}. Valid options: {list(_METRICS_ENDPOINTS)}"
+            )
         results = await asyncio.gather(
             *[api_get(_METRICS_ENDPOINTS[s]) for s in selected],
             return_exceptions=True,
