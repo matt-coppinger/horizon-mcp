@@ -9,26 +9,25 @@ from ..client import api_delete, api_get, api_post, api_put
 def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
-    async def get_pool_entitlements(
+    async def list_pool_entitlements(
         pool_type: Annotated[Literal["desktop", "application"], "Type of pool"],
-        pool_id: Annotated[
-            str,
-            "Pool ID to retrieve entitlements for. "
-            "If omitted, returns entitlements across all pools of the given type.",
-        ] = "",
-    ) -> dict | list:
-        """Get the users and groups entitled to access a pool (or all pools of a type).
+    ) -> list:
+        """List entitlements for all pools of the given type.
 
-        Returns a single pool's entitlements when pool_id is provided, or a list of
-        entitlements for all pools when pool_id is omitted.
-
-        Replaces: get_desktop_pool_entitlement, list_desktop_pool_entitlements,
-        get_application_pool_entitlement, list_application_pool_entitlements.
+        Returns which users and groups are entitled to each pool.
+        Use get_pool_entitlement for a specific pool's details.
         """
         base = f"/entitlements/v1/{'desktop' if pool_type == 'desktop' else 'application'}-pools"
-        if pool_id:
-            return await api_get(f"{base}/{pool_id}")
         return await api_get(base) or []
+
+    @mcp.tool()
+    async def get_pool_entitlement(
+        pool_id: Annotated[str, "Pool ID to retrieve entitlements for"],
+        pool_type: Annotated[Literal["desktop", "application"], "Type of pool"],
+    ) -> dict:
+        """Get the users and groups entitled to access a specific pool."""
+        base = f"/entitlements/v1/{'desktop' if pool_type == 'desktop' else 'application'}-pools"
+        return await api_get(f"{base}/{pool_id}")
 
     @mcp.tool()
     async def set_pool_entitlements(
@@ -50,9 +49,6 @@ def register(mcp: FastMCP) -> None:
         CAUTION: action='replace' removes any existing entitlements not in the provided list.
         CAUTION: action='remove' immediately revokes access for the specified principals.
         Always confirm with the user before using replace or remove.
-
-        Replaces: set_desktop_pool_entitlements, remove_desktop_pool_entitlements,
-        set_application_pool_entitlements.
         """
         base = f"/entitlements/v1/{'desktop' if pool_type == 'desktop' else 'application'}-pools"
         spec = [{"id": pool_id, "ad_user_or_group_ids": ad_user_or_group_ids}]

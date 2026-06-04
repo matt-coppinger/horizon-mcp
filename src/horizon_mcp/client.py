@@ -41,6 +41,7 @@ async def get_client() -> httpx.AsyncClient:
             base_url=f"{base_url}/rest",
             headers={"Authorization": f"Bearer {token}"},
             verify=verify,
+            transport=httpx.AsyncHTTPTransport(retries=3),
             timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
@@ -58,12 +59,8 @@ async def reset_client() -> None:
 def _parse_error(resp: httpx.Response) -> str:
     try:
         body = resp.json()
-        return (
-            body.get("errors")
-            or body.get("error_message")
-            or body.get("message")
-            or str(body)
-        )
+        detail = body.get("errors") or body.get("error_message") or body.get("message")
+        return str(detail) if detail else str(body)
     except Exception:
         return resp.text or f"HTTP {resp.status_code}"
 

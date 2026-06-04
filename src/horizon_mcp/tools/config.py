@@ -1,5 +1,5 @@
 """Config tools: connection servers, virtual centers, licenses, settings, policies."""
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 
@@ -75,19 +75,23 @@ def register(mcp: FastMCP) -> None:
     # ── Image Management ───────────────────────────────────────────────────────
 
     @mcp.tool()
-    async def list_im_streams() -> list:
-        """List image management streams (image publishing pipelines)."""
-        return await api_get("/config/v1/im-streams") or []
+    async def list_image_management(
+        resource: Annotated[
+            Literal["streams", "versions", "tags"],
+            "Image management resource to list: "
+            "streams (publishing pipelines), versions (published images), tags (pool targets).",
+        ],
+    ) -> list:
+        """List image management streams, versions, or tags.
 
-    @mcp.tool()
-    async def list_im_versions() -> list:
-        """List image management versions across all streams."""
-        return await api_get("/config/v1/im-versions") or []
-
-    @mcp.tool()
-    async def list_im_tags() -> list:
-        """List image management tags used to target pools for image updates."""
-        return await api_get("/config/v1/im-tags") or []
+        Replaces: list_im_streams, list_im_versions, list_im_tags.
+        """
+        paths = {
+            "streams": "/config/v1/im-streams",
+            "versions": "/config/v1/im-versions",
+            "tags": "/config/v1/im-tags",
+        }
+        return await api_get(paths[resource]) or []
 
     # ── Gateways ───────────────────────────────────────────────────────────────
 
@@ -98,12 +102,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def validate_connection_server_backup(
-        server_ids: Annotated[list[str], "Connection server IDs to back up"] = None,  # type: ignore[assignment]
+        server_ids: Annotated[
+            list[str] | None,
+            "Connection server IDs to back up. If omitted, all Connection Servers are backed up.",
+        ] = None,
     ) -> dict:
-        """Initiate an immediate backup of one or more Connection Servers.
-
-        If no server_ids are provided, all Connection Servers are backed up.
-        """
-        body = server_ids or []
-        result = await api_post("/config/v1/connection-servers/action/backup", body)
+        """Initiate an immediate backup of one or more Connection Servers."""
+        result = await api_post("/config/v1/connection-servers/action/backup", server_ids or [])
         return result or {"success": True}

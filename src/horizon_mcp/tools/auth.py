@@ -4,6 +4,7 @@ from typing import Annotated
 
 import httpx
 from fastmcp import FastMCP
+from pydantic import SecretStr
 
 from ..client import reset_client
 
@@ -12,7 +13,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def horizon_login(
         username: Annotated[str, "AD username (without domain prefix)"],
-        password: Annotated[str, "AD password"],
+        password: Annotated[SecretStr, "AD password — masked in logs and server-side traces"],
         domain: Annotated[str, "AD domain name, e.g. CORP or corp.example.com"],
         base_url: Annotated[
             str,
@@ -27,6 +28,10 @@ def register(mcp: FastMCP) -> None:
 
         This tool also updates the running server's active token so subsequent tool calls
         work immediately without restarting the server.
+
+        SECURITY: Copy the returned access_token to your MCP client config
+        (HORIZON_ACCESS_TOKEN env var), then clear it from the conversation.
+        Treat both tokens as passwords — do not share or log them.
         """
         url = (base_url or os.environ.get("HORIZON_BASE_URL", "")).rstrip("/")
         if not url:
@@ -38,7 +43,7 @@ def register(mcp: FastMCP) -> None:
         async with httpx.AsyncClient(verify=verify, timeout=15.0) as http:
             resp = await http.post(
                 f"{url}/rest/login",
-                json={"domain": domain, "username": username, "password": password},
+                json={"domain": domain, "username": username, "password": password.get_secret_value()},
             )
             if not resp.is_success:
                 try:
@@ -48,7 +53,6 @@ def register(mcp: FastMCP) -> None:
                 raise ValueError(f"Login failed ({resp.status_code}): {err}")
             tokens: dict = resp.json()
 
-        # Update running server so the new token is used immediately
         os.environ["HORIZON_ACCESS_TOKEN"] = tokens["access_token"]
         if not os.environ.get("HORIZON_BASE_URL"):
             os.environ["HORIZON_BASE_URL"] = url
@@ -59,13 +63,14 @@ def register(mcp: FastMCP) -> None:
             "refresh_token": tokens.get("refresh_token"),
             "note": (
                 "Token is now active for this server session. "
-                "To persist across restarts, set HORIZON_ACCESS_TOKEN in your MCP client config."
+                "Set HORIZON_ACCESS_TOKEN in your MCP client config to persist across restarts. "
+                "Treat both tokens as secrets."
             ),
         }
 
     @mcp.tool()
     async def horizon_refresh_token(
-        refresh_token: Annotated[str, "Refresh token obtained from horizon_login"],
+        refresh_token: Annotated[SecretStr, "Refresh token obtained from horizon_login"],
         base_url: Annotated[
             str, "Horizon server URL. Defaults to HORIZON_BASE_URL env var."
         ] = "",
@@ -85,7 +90,7 @@ def register(mcp: FastMCP) -> None:
         async with httpx.AsyncClient(verify=verify, timeout=15.0) as http:
             resp = await http.post(
                 f"{url}/rest/refresh",
-                json={"refresh_token": refresh_token},
+                json={"refresh_token": refresh_token.get_secret_value()},
             )
             if not resp.is_success:
                 try:
@@ -105,7 +110,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def horizon_logout(
-        refresh_token: Annotated[str, "Refresh token to invalidate"],
+        refresh_token: Annotated[SecretStr, "Refresh token to invalidate"],
         base_url: Annotated[
             str, "Horizon server URL. Defaults to HORIZON_BASE_URL env var."
         ] = "",
@@ -123,7 +128,7 @@ def register(mcp: FastMCP) -> None:
         async with httpx.AsyncClient(verify=verify, timeout=15.0) as http:
             resp = await http.post(
                 f"{url}/rest/logout",
-                json={"refresh_token": refresh_token},
+                json={"refresh_token": refresh_token.get_secret_value()},
                 headers=headers,
             )
             if not resp.is_success:

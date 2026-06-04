@@ -1,6 +1,6 @@
 # Horizon MCP Server
 
-MCP (Model Context Protocol) server for [Omnissa Horizon](https://www.omnissa.com/products/horizon/) VDI management. Exposes the Horizon REST API (version 2512) as 66 MCP tools covering inventory, monitoring, configuration, entitlements, Active Directory, and help desk functions.
+MCP (Model Context Protocol) server for [Omnissa Horizon](https://www.omnissa.com/products/horizon/) VDI management. Exposes the Horizon REST API (version 2512) as MCP tools covering inventory, monitoring, configuration, entitlements, Active Directory, and help desk functions.
 
 ## Requirements
 
@@ -13,7 +13,7 @@ MCP (Model Context Protocol) server for [Omnissa Horizon](https://www.omnissa.co
 ```bash
 git clone https://github.com/matt-coppinger/horizon-mcp.git
 cd horizon-mcp
-uv venv && uv pip install -e .
+uv sync
 ```
 
 ## Configuration
@@ -53,7 +53,7 @@ Add to your MCP client configuration:
 }
 ```
 
-**Claude Code** (`.claude/settings.json` in your project, or `~/.claude/settings.json` globally):
+**Claude Code** (`~/.claude/settings.json`):
 ```json
 {
   "mcpServers": {
@@ -81,6 +81,8 @@ horizon-mcp
 
 The server exposes a single endpoint at `http://host:8000/mcp`.
 
+> **HTTP transport security:** The HTTP endpoint has no built-in authentication. For any non-localhost deployment, place the server behind a reverse proxy (nginx, Caddy, Traefik) that enforces TLS and an auth mechanism such as mutual TLS or a bearer token check. Each user should run a separate server instance with their own token to maintain session isolation.
+
 ## Getting an Access Token
 
 If you don't have a token yet, omit `HORIZON_ACCESS_TOKEN` from the config and call `horizon_login` as the first tool:
@@ -88,12 +90,14 @@ If you don't have a token yet, omit `HORIZON_ACCESS_TOKEN` from the config and c
 ```
 Call horizon_login with:
   username: jsmith
-  password: ******
+  password: ******   ← treated as a secret, masked in server logs
   domain: CORP
   base_url: https://horizon.corp.example.com
 ```
 
 The tool returns `access_token` and `refresh_token`, and immediately activates the new token for the current server session. Copy the `access_token` value into your MCP client config and restart the server to persist it across restarts.
+
+> **Security:** Treat `access_token` and `refresh_token` as passwords. After copying the token to your config, clear it from the conversation context. Do not commit tokens to version control.
 
 Use `horizon_refresh_token` with the `refresh_token` to renew the access token (~8 hour expiry) without re-entering credentials.
 
@@ -102,7 +106,7 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 ### Auth
 | Tool | Description |
 |---|---|
-| `horizon_login` | Authenticate with AD credentials, returns access + refresh tokens |
+| `horizon_login` | Authenticate with AD credentials (password masked in logs), returns access + refresh tokens |
 | `horizon_refresh_token` | Refresh an expired access token |
 | `horizon_logout` | Invalidate current session |
 
@@ -127,18 +131,9 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 ### Monitor
 | Tool | Description |
 |---|---|
-| `get_health_metrics` | Overall environment health summary |
-| `list_connection_servers_health` | Connection server health |
-| `get_connection_server_health` | Single connection server health |
-| `list_desktop_pool_metrics` | Session/machine counts per pool |
-| `get_session_metrics` | Aggregate session counts |
-| `list_gateway_health` | UAG health status |
-| `list_virtual_center_health` | vCenter health |
-| `list_ad_domain_health` | AD domain reachability |
-| `get_machine_count_metrics` | Machine state totals |
-| `get_system_metrics` | CPU/memory for all components |
-| `list_farm_health` | RDS farm health |
-| `get_license_usage_metrics` | License usage data |
+| `get_infrastructure_health` | Health across all components in one parallel call (summary, connection servers, gateways, vCenters, AD domains, farms) |
+| `get_metrics` | Capacity metrics in one parallel call (pools, sessions, machines, system, RDS servers, license) |
+| `get_connection_server_health` | Detailed health for a specific Connection Server |
 
 ### Config
 | Tool | Description |
@@ -152,19 +147,16 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `list_licenses` | License list and status |
 | `get_event_database` | Event DB config |
 | `list_ic_domain_accounts` | Instant clone domain accounts |
-| `list_im_streams` / `list_im_versions` / `list_im_tags` | Image management |
+| `list_image_management` | Image management streams, versions, or tags (pass `resource`: `streams`\|`versions`\|`tags`) |
 | `list_gateways` | Registered UAGs |
+| `validate_connection_server_backup` | Trigger Connection Server backup |
 
 ### Entitlements
 | Tool | Description |
 |---|---|
-| `list_desktop_pool_entitlements` | All desktop pool entitlements |
-| `get_desktop_pool_entitlement` | Users/groups for a pool |
-| `set_desktop_pool_entitlements` | Add or replace entitlements |
-| `remove_desktop_pool_entitlements` | Remove entitlements |
-| `list_application_pool_entitlements` | All app pool entitlements |
-| `get_application_pool_entitlement` | Users/groups for an app pool |
-| `set_application_pool_entitlements` | Add or replace app entitlements |
+| `list_pool_entitlements` | All entitlements for desktop or application pools |
+| `get_pool_entitlement` | Users/groups for a specific pool |
+| `set_pool_entitlements` | Add, replace, or remove entitlements (desktop or application) |
 
 ### External / Active Directory
 | Tool | Description |
@@ -181,13 +173,9 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 ### Help Desk
 | Tool | Description |
 |---|---|
-| `get_session_logon_timing` | Detailed logon phase timing |
-| `get_session_display_performance` | Real-time PCoIP/BLAST metrics |
-| `get_session_historical_performance` | 15-minute performance history |
-| `get_session_processes` | Processes running in session |
+| `diagnose_session` | All session diagnostics in one parallel call: logon timing, display performance, historical performance, processes, remote applications |
 | `get_remote_assistance_ticket` | MSRA ticket for remote support |
-| `get_session_remote_applications` | Running published apps |
-| `end_remote_application` | Force-close a published app |
+| `end_remote_application` | Force-close a published app in a session |
 
 ## Horizon Filter Syntax
 
@@ -210,10 +198,17 @@ Most list tools accept a `filter` parameter using Horizon's JSON filter format:
 }
 ```
 
+## Running Tests
+
+```bash
+uv run pytest tests/ -v
+```
+
 ## Security Notes
 
 - Store credentials in your MCP client's `env` block, not in code or config files tracked by git.
 - In production, always keep `HORIZON_VERIFY_SSL=true` (default).
-- The access token is transmitted in the `Authorization: Bearer` header to the Horizon server. Ensure your network path uses TLS.
-- This server stores the active token in the process environment. For multi-user HTTP deployments, consider running separate server instances per user.
-- Destructive operations (logoff, rebuild, machine actions) require explicit confirmation — always verify before executing.
+- Passwords passed to `horizon_login` are typed as `SecretStr` and masked in server-side logs.
+- Access and refresh tokens are returned in the login response so you can copy them to your config — treat them as passwords and clear them from the conversation after use.
+- For multi-user HTTP deployments, run separate server instances per user and protect the endpoint with a reverse proxy that enforces authentication.
+- Destructive operations (logoff, rebuild, machine actions) require explicit user confirmation — always verify intent before executing.

@@ -21,12 +21,13 @@ Workflow:
 3. Use refresh token via horizon_refresh_token before expiry (~8 hours).
 
 Tool groups:
-  Auth         — login, logout, token refresh
+  Auth         — login (SecretStr password), logout, token refresh
   Inventory    — desktop pools, machines, sessions, RDS farms, application pools
   Monitor      — get_infrastructure_health (all components), get_metrics (all scopes),
                  get_connection_server_health (per-server detail)
-  Config       — connection servers, virtual centers, licenses, global policies, settings
-  Entitlements — get_pool_entitlements, set_pool_entitlements (desktop and application)
+  Config       — connection servers, virtual centers, licenses, global policies, settings,
+                 list_image_management (streams|versions|tags)
+  Entitlements — list_pool_entitlements, get_pool_entitlement, set_pool_entitlements
   External     — AD user/group search, domains, audit events
   Help Desk    — diagnose_session (all diagnostics in one call), remote assistance
 
