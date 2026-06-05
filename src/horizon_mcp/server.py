@@ -1,10 +1,23 @@
 """FastMCP server definition for Omnissa Horizon."""
+import os
+
 from fastmcp import FastMCP
+from fastmcp.server.auth import StaticTokenVerifier
 
 from .tools import auth, config, entitlements, external, helpdesk, inventory, monitor
 
+# When MCP_API_KEY is set, HTTP transport requires clients to send
+# Authorization: Bearer <MCP_API_KEY>. Stdio transport always skips auth.
+_api_key = os.environ.get("MCP_API_KEY")
+_auth = (
+    StaticTokenVerifier(tokens={_api_key: {"client_id": "mcp-client", "scopes": ["mcp"]}})
+    if _api_key
+    else None
+)
+
 mcp = FastMCP(
     name="Horizon",
+    auth=_auth,
     instructions="""MCP server for Omnissa Horizon VDI management (API version 2512).
 
 Required environment variables:
@@ -13,6 +26,7 @@ Required environment variables:
   HORIZON_VERIFY_SSL       Set to 'false' to skip TLS verification (lab use only)
   MCP_TRANSPORT            Transport: 'stdio' (default) | 'streamable-http' | 'sse'
   MCP_HOST / MCP_PORT      Host/port when using HTTP transport (default 0.0.0.0:8000)
+  MCP_API_KEY              (HTTP transport only) Bearer token clients must send to authenticate
 
 Workflow:
 1. Call horizon_login with AD credentials to receive access_token + refresh_token.

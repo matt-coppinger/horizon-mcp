@@ -28,6 +28,7 @@ The server reads configuration from environment variables:
 | `MCP_TRANSPORT` | No | `stdio` (default), `streamable-http`, or `sse` |
 | `MCP_HOST` | No | Bind host for HTTP transport (default `0.0.0.0`) |
 | `MCP_PORT` | No | Port for HTTP transport (default `8000`) |
+| `MCP_API_KEY` | No | HTTP transport only — clients must send `Authorization: Bearer <value>` |
 
 *`HORIZON_ACCESS_TOKEN` can also be obtained at runtime by calling the `horizon_login` tool.
 
@@ -81,7 +82,35 @@ horizon-mcp
 
 The server exposes a single endpoint at `http://host:8000/mcp`.
 
-> **HTTP transport security:** The HTTP endpoint has no built-in authentication. For any non-localhost deployment, place the server behind a reverse proxy (nginx, Caddy, Traefik) that enforces TLS and an auth mechanism such as mutual TLS or a bearer token check. Each user should run a separate server instance with their own token to maintain session isolation.
+Set `MCP_API_KEY` to require clients to authenticate with `Authorization: Bearer <MCP_API_KEY>`:
+
+```bash
+MCP_TRANSPORT=streamable-http \
+MCP_PORT=8000 \
+MCP_API_KEY=your-secret-key \
+HORIZON_BASE_URL=https://horizon.corp.example.com \
+HORIZON_ACCESS_TOKEN=your-token \
+horizon-mcp
+```
+
+Clients (Claude Desktop, Claude Code) pass the key in their MCP config:
+
+```json
+{
+  "mcpServers": {
+    "horizon": {
+      "url": "http://your-server:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer your-secret-key"
+      }
+    }
+  }
+}
+```
+
+stdio transport always skips authentication regardless of `MCP_API_KEY`.
+
+> **HTTP transport security:** For any non-localhost deployment, place the server behind a reverse proxy (nginx, Caddy, Traefik) that enforces TLS. Each user should run a separate server instance with their own `HORIZON_ACCESS_TOKEN` and `MCP_API_KEY` to maintain session isolation.
 
 ## Getting an Access Token
 
