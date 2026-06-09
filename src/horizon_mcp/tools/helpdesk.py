@@ -47,7 +47,7 @@ def register(mcp: FastMCP) -> None:
                 f"Unknown aspects: {unknown}. Valid options: {list(_DIAGNOSTIC_ASPECTS)}"
             )
         coros = [
-            api_get(_DIAGNOSTIC_ASPECTS[a][0], params={"session_id": session_id})
+            api_get(_DIAGNOSTIC_ASPECTS[a][0], params={"internal_session_id": session_id})
             for a in selected
         ]
         results = await asyncio.gather(*coros, return_exceptions=True)
@@ -68,15 +68,15 @@ def register(mcp: FastMCP) -> None:
         """
         return await api_get(
             "/helpdesk/v2/remote-assistant-ticket",
-            params={"session_id": session_id},
+            params={"internal_session_id": session_id},
         )
 
     @mcp.tool()
     async def end_remote_application(
         session_id: Annotated[str, "Session ID"],
-        application_id: Annotated[
+        remote_application_id: Annotated[
             str,
-            "Application ID to terminate. Use diagnose_session with aspects=['remote_applications'] to find IDs.",
+            "Remote application ID to terminate. Use diagnose_session with aspects=['remote_applications'] to find IDs.",
         ],
     ) -> dict:
         """Terminate a specific remote application running in a session.
@@ -86,6 +86,6 @@ def register(mcp: FastMCP) -> None:
         """
         result = await api_post(
             "/helpdesk/v1/performance/remote-application/action/end-remote-application",
-            params={"session_id": session_id, "application_id": application_id},
+            params={"session_id": session_id, "remote_application_id": remote_application_id},
         )
         return result or {"success": True}

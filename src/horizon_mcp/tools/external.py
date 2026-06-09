@@ -82,7 +82,7 @@ def register(mcp: FastMCP) -> None:
     async def list_base_vms(
         vcenter_id: Annotated[
             str, "vCenter ID to list VMs from. Use list_virtual_centers to get IDs."
-        ] = "",
+        ],
         datacenter_id: Annotated[str, "Datacenter ID to filter by (optional)"] = "",
     ) -> list:
         """List VMs in vCenter that can be used as base images for instant clone pools/farms."""
@@ -98,12 +98,10 @@ def register(mcp: FastMCP) -> None:
         vcenter_id: Annotated[str, "vCenter ID. Use list_virtual_centers to get IDs."],
         host_or_cluster_id: Annotated[
             str, "Host or cluster ID. Use list_hosts_or_clusters to get IDs."
-        ] = "",
+        ],
     ) -> list:
         """List datastores available in vCenter for desktop pool or farm provisioning."""
-        params: dict = {"vcenter_id": vcenter_id}
-        if host_or_cluster_id:
-            params["host_or_cluster_id"] = host_or_cluster_id
+        params = {"vcenter_id": vcenter_id, "host_or_cluster_id": host_or_cluster_id}
         return await api_get("/external/v1/datastores", params) or []
 
     @mcp.tool()
@@ -114,3 +112,139 @@ def register(mcp: FastMCP) -> None:
         """List VM folders in a vCenter datacenter for use in pool/farm configuration."""
         params = {"vcenter_id": vcenter_id, "datacenter_id": datacenter_id}
         return await api_get("/external/v1/vm-folders", params) or []
+
+    @mcp.tool()
+    async def list_datacenters(
+        vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
+    ) -> list:
+        """List datacenters in a vCenter Server.
+
+        The datacenter ID is required by list_vm_folders, list_hosts_or_clusters,
+        and create_desktop_pool / create_rdsh_farm provisioning_settings.
+        """
+        return await api_get("/external/v1/datacenters", {"vcenter_id": vcenter_id}) or []
+
+    @mcp.tool()
+    async def list_hosts_or_clusters(
+        vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
+        datacenter_id: Annotated[str, "Datacenter ID — obtain from list_datacenters"],
+    ) -> list:
+        """List hosts and clusters in a vCenter datacenter.
+
+        The host_or_cluster_id is required by list_datastores, list_resource_pools,
+        list_network_labels, and create_desktop_pool / create_rdsh_farm provisioning_settings.
+        """
+        params = {"vcenter_id": vcenter_id, "datacenter_id": datacenter_id}
+        return await api_get("/external/v1/hosts-or-clusters", params) or []
+
+    @mcp.tool()
+    async def list_resource_pools(
+        vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
+        host_or_cluster_id: Annotated[
+            str, "Host or cluster ID — obtain from list_hosts_or_clusters"
+        ],
+    ) -> list:
+        """List resource pools on a host or cluster.
+
+        The resource_pool_id is required by create_desktop_pool and create_rdsh_farm
+        provisioning_settings.
+        """
+        params = {"vcenter_id": vcenter_id, "host_or_cluster_id": host_or_cluster_id}
+        return await api_get("/external/v1/resource-pools", params) or []
+
+    @mcp.tool()
+    async def list_base_vm_snapshots(
+        vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
+        base_vm_id: Annotated[str, "Base VM ID — obtain from list_base_vms"],
+    ) -> list:
+        """List snapshots of a base VM that can be used as the image for an instant clone pool or farm.
+
+        The snapshot_id is required by create_desktop_pool and create_rdsh_farm
+        provisioning_settings when source is INSTANT_CLONE.
+        """
+        params = {"vcenter_id": vcenter_id, "base_vm_id": base_vm_id}
+        return await api_get("/external/v2/base-snapshots", params) or []
+
+    @mcp.tool()
+    async def list_network_labels(
+        vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
+        host_or_cluster_id: Annotated[
+            str, "Host or cluster ID — obtain from list_hosts_or_clusters"
+        ],
+    ) -> list:
+        """List network labels (port groups / distributed port groups) available on a host or cluster.
+
+        Network label IDs are used in the nics array of create_desktop_pool and
+        create_rdsh_farm provisioning_settings:
+          "nics": [{"nic_id": "<id from list_network_interface_cards>", "network_label_id": "<id>"}]
+        """
+        params = {"vcenter_id": vcenter_id, "host_or_cluster_id": host_or_cluster_id}
+        return await api_get("/external/v1/network-labels", params) or []
+
+    @mcp.tool()
+    async def list_network_interface_cards(
+        vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
+        base_vm_id: Annotated[str, "Base VM ID — obtain from list_base_vms (optional)"] = "",
+        base_snapshot_id: Annotated[str, "Base snapshot ID — obtain from list_base_vm_snapshots (optional)"] = "",
+        vm_template_id: Annotated[str, "VM template ID — obtain from list_vm_templates (optional)"] = "",
+    ) -> list:
+        """List network interface cards (NICs) available for pool or farm NIC configuration.
+
+        The nic_id from these results pairs with a network_label_id (from list_network_labels)
+        in the nics array of create_desktop_pool and create_rdsh_farm provisioning_settings:
+          "nics": [{"nic_id": "<id>", "network_label_id": "<id from list_network_labels>"}]
+
+        Pass base_vm_id + base_snapshot_id to filter NICs for an instant-clone pool,
+        or vm_template_id to filter NICs for a full/linked-clone pool.
+        """
+        params: dict = {"vcenter_id": vcenter_id}
+        if base_vm_id:
+            params["base_vm_id"] = base_vm_id
+        if base_snapshot_id:
+            params["base_snapshot_id"] = base_snapshot_id
+        if vm_template_id:
+            params["vm_template_id"] = vm_template_id
+        return await api_get("/external/v1/network-interface-cards", params) or []
+
+    @mcp.tool()
+    async def list_vm_templates(
+        vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
+        datacenter_id: Annotated[str, "Datacenter ID — obtain from list_datacenters (optional)"] = "",
+    ) -> list:
+        """List VM templates available in vCenter for use as pool base images.
+
+        Templates are used for full-clone or linked-clone desktop pools
+        (source=FULL_CLONE or LINKED_CLONE). Use the template_id in
+        create_desktop_pool provisioning_settings instead of parent_vm_id.
+        """
+        params: dict = {"vcenter_id": vcenter_id}
+        if datacenter_id:
+            params["datacenter_id"] = datacenter_id
+        return await api_get("/external/v1/vm-templates", params) or []
+
+    @mcp.tool()
+    async def list_datastore_clusters(
+        vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
+        host_or_cluster_id: Annotated[
+            str, "Host or cluster ID — obtain from list_hosts_or_clusters"
+        ],
+    ) -> list:
+        """List datastore clusters (Storage DRS pods) available on a host or cluster.
+
+        Use the datastore_cluster_id in create_desktop_pool or create_rdsh_farm
+        provisioning_settings when using Storage DRS for automated datastore placement.
+        """
+        params = {"vcenter_id": vcenter_id, "host_or_cluster_id": host_or_cluster_id}
+        return await api_get("/external/v1/datastore-clusters", params) or []
+
+    @mcp.tool()
+    async def list_customization_specifications(
+        vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
+    ) -> list:
+        """List vCenter customization specifications (Sysprep/QuickPrep) available for pool provisioning.
+
+        The customization_specification_id from these results is used in
+        create_desktop_pool and create_rdsh_farm provisioning_settings to apply
+        OS customization (hostname, domain join, license key) to provisioned VMs.
+        """
+        return await api_get("/external/v1/customization-specifications", {"vcenter_id": vcenter_id}) or []

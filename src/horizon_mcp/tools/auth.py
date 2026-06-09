@@ -58,11 +58,16 @@ def register(mcp: FastMCP) -> None:
             os.environ["HORIZON_BASE_URL"] = url
         await reset_client()
 
+        token = tokens["access_token"]
+        refresh = tokens.get("refresh_token", "")
         return {
-            "SECURITY": "Copy access_token to HORIZON_ACCESS_TOKEN in your MCP client config, then clear it from the conversation. Treat both tokens as passwords.",
-            "access_token": tokens["access_token"],
-            "refresh_token": tokens.get("refresh_token"),
-            "note": "Token is now active for this server session. Restart the server after updating your MCP client config to persist it.",
+            "status": "authenticated",
+            "note": "Token is now active for this server session. Set HORIZON_ACCESS_TOKEN in your MCP client config to persist it across restarts.",
+            "SECURITY": "Treat these tokens as passwords. Clear them from the conversation after copying to your config. Do not commit to version control.",
+            "access_token": token,
+            "access_token_hint": f"{token[:8]}…",
+            "refresh_token": refresh,
+            "refresh_token_hint": f"{refresh[:8]}…" if refresh else "",
         }
 
     @mcp.tool()
@@ -100,9 +105,13 @@ def register(mcp: FastMCP) -> None:
         os.environ["HORIZON_ACCESS_TOKEN"] = result["access_token"]
         await reset_client()
 
+        token = result["access_token"]
         return {
-            "access_token": result["access_token"],
-            "note": "New access token is now active for this server session.",
+            "status": "token_refreshed",
+            "note": "New access token is now active for this server session. Update HORIZON_ACCESS_TOKEN in your MCP client config if you want to persist it.",
+            "SECURITY": "Treat this token as a password. Clear it from the conversation after copying.",
+            "access_token": token,
+            "access_token_hint": f"{token[:8]}…",
         }
 
     @mcp.tool()

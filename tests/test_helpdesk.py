@@ -100,7 +100,7 @@ async def test_diagnose_session_passes_session_id_to_each_call(tools):
     with patch("horizon_mcp.tools.helpdesk.api_get", side_effect=fake_api_get):
         await tools["diagnose_session"](session_id="my-session-id", aspects=["logon_timing"])
 
-    assert received_params == [{"session_id": "my-session-id"}]
+    assert received_params == [{"internal_session_id": "my-session-id"}]
 
 
 async def test_diagnose_session_none_result_returns_empty(tools):

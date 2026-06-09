@@ -144,13 +144,22 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 |---|---|
 | `list_desktop_pools` | List all VDI and RDS desktop pools |
 | `get_desktop_pool` | Get pool details |
+| `create_desktop_pool` | Create a new desktop pool (VDI or RDS, automated or manual) |
+| `update_desktop_pool` | Update an existing desktop pool's configuration |
+| `delete_desktop_pool` | Delete a desktop pool and all its machines ⚠️ — requires `confirm=True` |
 | `list_machines` | List virtual desktops (filterable by pool, state) |
 | `get_machine` | Get machine details |
 | `machine_action` | Shutdown, restart, reset, rebuild, recover, maintenance |
 | `list_rdsh_farms` | List RDS farms |
 | `get_rdsh_farm` | Get farm details |
+| `create_rdsh_farm` | Create a new RDS farm (automated or manual) |
+| `update_rdsh_farm` | Update an existing RDS farm's configuration |
+| `delete_rdsh_farm` | Delete an RDS farm and all its servers ⚠️ — requires `confirm=True` |
 | `list_application_pools` | List published application pools |
 | `get_application_pool` | Get application pool details |
+| `create_application_pool` | Publish a new application pool from an RDS farm |
+| `update_application_pool` | Update an existing application pool's configuration |
+| `delete_application_pool` | Unpublish an application pool ⚠️ — requires `confirm=True` |
 | `list_sessions` | List active user sessions |
 | `get_session` | Get session details |
 | `disconnect_sessions` | Disconnect sessions (keep running) |
@@ -196,8 +205,71 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `get_domain_netbios_map` | NETBIOS → DNS domain name map |
 | `list_audit_events` | Administrative audit log |
 | `list_base_vms` | VMs available for pool base images |
-| `list_datastores` | Datastores for provisioning |
+| `list_base_vm_snapshots` | Snapshots of a base VM (snapshot_id for instant clone pools) |
+| `list_datastores` | Datastores for provisioning (requires vcenter_id + host_or_cluster_id) |
 | `list_vm_folders` | VM folders in vCenter |
+| `list_datacenters` | Datacenters in a vCenter Server |
+| `list_hosts_or_clusters` | Hosts and clusters in a datacenter |
+| `list_resource_pools` | Resource pools on a host or cluster |
+| `list_network_labels` | Network port groups on a host or cluster |
+| `list_network_interface_cards` | NICs on a host or cluster (nic_id for pool NIC config) |
+| `list_vm_templates` | VM templates for full/linked-clone pools |
+| `list_datastore_clusters` | Storage DRS datastore clusters (requires vcenter_id + host_or_cluster_id) |
+| `list_customization_specifications` | Sysprep/QuickPrep specs for OS customization during provisioning |
+
+### Discovery
+| Tool | Description |
+|---|---|
+| `get_api_coverage` | Lists all tools, resources, and unsupported operations — call this to understand what can be managed via this server |
+
+### Resources (read-only)
+
+MCP Resources expose read-only Horizon data without consuming tool slots. Access them via `horizon://<path>` using your MCP client's resource protocol.
+
+**Config resources** (`horizon://config/...`):
+
+| URI | Description |
+|---|---|
+| `horizon://config/roles` | RBAC roles and their privileges |
+| `horizon://config/permissions` | Role-to-principal permission assignments |
+| `horizon://config/privileges` | All selectable admin privileges |
+| `horizon://config/local-access-groups` | Local access groups for admin delegation |
+| `horizon://config/federation-access-groups` | CPA federation access groups |
+| `horizon://config/saml-authenticators` | SAML 2.0 authenticator configurations |
+| `horizon://config/radius-authenticators` | RADIUS authenticator configurations |
+| `horizon://config/gssapi-authenticators` | GSSAPI/Kerberos authenticator configurations |
+| `horizon://config/jwt-authenticators` | JWT authenticator configurations |
+| `horizon://config/app-volumes-managers` | App Volumes Managers registered with Horizon |
+| `horizon://config/uem-servers` | User Environment Manager servers |
+| `horizon://config/true-sso` | TrueSSO connector configurations |
+| `horizon://config/true-sso-enrollment-servers` | TrueSSO enrollment servers |
+| `horizon://config/compute-profiles` | Compute profiles for provisioning |
+| `horizon://config/customization-specifications` | Sysprep/QuickPrep specs (config view) |
+| `horizon://config/settings/general` | General settings |
+| `horizon://config/settings/security` | Security settings |
+| `horizon://config/settings/client` | Client feature settings |
+| `horizon://config/settings/feature` | Feature toggle settings |
+| `horizon://config/settings/agent-restriction` | Allowed agent versions/types |
+| `horizon://config/syslog` | Syslog configuration |
+| `horizon://config/ceip` | CEIP enrollment status |
+| `horizon://config/url-redirection` | URL content redirection rules |
+| `horizon://config/pre-logon-settings` | Pre-logon banner/message settings |
+| `horizon://config/log-collector/log-levels` | Component log levels |
+| `horizon://config/log-collector/tasks` | Log collection tasks |
+
+**Monitor resources** (`horizon://monitor/...`):
+
+| URI | Description |
+|---|---|
+| `horizon://monitor/app-volumes-managers` | App Volumes Manager health |
+| `horizon://monitor/event-database` | Event database status |
+| `horizon://monitor/rds-servers` | RDS server health and session load |
+| `horizon://monitor/saml-authenticators` | SAML authenticator health |
+| `horizon://monitor/true-sso` | TrueSSO health and certificate status |
+| `horizon://monitor/datastores/usage-metrics` | Datastore usage per pool/farm |
+| `horizon://monitor/pods` | Remote pod health (CPA) |
+| `horizon://monitor/pods/global-session-metrics` | Aggregate session counts across pods |
+| `horizon://monitor/message-clients` | Message client health |
 
 ### Help Desk
 | Tool | Description |
@@ -226,6 +298,59 @@ Most list tools accept a `filter` parameter using Horizon's JSON filter format:
   ]
 }
 ```
+
+## Creating Pools and Farms
+
+`create_desktop_pool` and `create_rdsh_farm` accept a `spec` dict that maps directly to the Horizon REST API request body. The required fields vary by pool type:
+
+**Automated Instant Clone desktop pool (minimum):**
+```json
+{
+  "name": "MyPool",
+  "display_name": "My Pool",
+  "type": "AUTOMATED",
+  "source": "INSTANT_CLONE",
+  "user_assignment": "FLOATING",
+  "provisioning_settings": {
+    "virtual_center_id": "<id from list_virtual_centers>",
+    "parent_vm_id": "<id from list_base_vms>",
+    "snapshot_id": "<snapshot id>",
+    "datacenter_id": "<datacenter id>",
+    "vm_folder_id": "<id from list_vm_folders>",
+    "host_or_cluster_id": "<host/cluster id>",
+    "resource_pool_id": "<resource pool id>",
+    "datastores": [{"datastore_id": "<id from list_datastores>"}],
+    "nics": [{"nic_id": "<network id>", "network_label_id": "<network id>"}],
+    "naming_method": "PATTERN",
+    "naming_pattern": "MyPool-{n:fixed=2}",
+    "max_machine_count": 10
+  }
+}
+```
+
+**Resource ID lookup chain** — follow this sequence to resolve all IDs before calling `create_desktop_pool` or `create_rdsh_farm`:
+
+```
+list_virtual_centers
+  ├─ list_customization_specifications(vcenter_id)   ← Sysprep/QuickPrep spec ID
+  ├─ list_vm_templates(vcenter_id)                   ← template_id (full/linked-clone pools)
+  └─ list_datacenters(vcenter_id)
+       ├─ list_vm_folders(vcenter_id, datacenter_id)
+       └─ list_hosts_or_clusters(vcenter_id, datacenter_id)
+            ├─ list_datastores(vcenter_id, host_or_cluster_id)
+            ├─ list_datastore_clusters(vcenter_id, host_or_cluster_id)
+            ├─ list_resource_pools(vcenter_id, host_or_cluster_id)
+            ├─ list_network_labels(vcenter_id, host_or_cluster_id)  ← network_label_id
+            └─ list_network_interface_cards(vcenter_id, ...)        ← nic_id
+list_base_vms(vcenter_id)                            ← parent_vm_id (instant-clone pools)
+  └─ list_base_vm_snapshots(vcenter_id, base_vm_id)  ← snapshot_id
+```
+
+`create_application_pool` uses explicit parameters instead — pass `name`, `farm_id`, `executable_path`, and optional fields directly.
+
+For updates, retrieve the current config with `get_desktop_pool` / `get_rdsh_farm` / `get_application_pool`, modify the relevant fields, and pass the result to the corresponding `update_*` tool.
+
+**Delete operations** (`delete_desktop_pool`, `delete_rdsh_farm`, `delete_application_pool`) require `confirm=True` to proceed. Always call `get_desktop_pool` / `get_rdsh_farm` and `list_sessions` first to verify intent before passing `confirm=True`.
 
 ## Running Tests
 

@@ -127,3 +127,11 @@ async def test_set_pool_entitlements_url_uses_pool_type_directly(tools, pool_typ
         )
 
     assert captured["path"] == f"/entitlements/v1/{pool_type}-pools"
+
+
+async def test_set_pool_entitlements_replace_with_empty_list_raises(tools):
+    with pytest.raises(ValueError, match="remove ALL entitlements"):
+        await tools["set_pool_entitlements"](
+            pool_id="pool-1", pool_type="desktop", action="replace",
+            ad_user_or_group_ids=[],
+        )

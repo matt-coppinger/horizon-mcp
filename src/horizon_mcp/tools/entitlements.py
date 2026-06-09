@@ -48,6 +48,13 @@ def register(mcp: FastMCP) -> None:
         CAUTION: action='remove' immediately revokes access for the specified principals.
         Always confirm with the user before using replace or remove.
         """
+        if action == "replace" and not ad_user_or_group_ids:
+            raise ValueError(
+                "action='replace' with an empty list would remove ALL entitlements from "
+                "the pool, immediately blocking all user access. Use action='remove' with "
+                "an explicit list of principals to revoke, or provide at least one "
+                "ad_user_or_group_id."
+            )
         spec = [{"id": pool_id, "ad_user_or_group_ids": ad_user_or_group_ids}]
         if action == "add":
             result = await api_post(f"/entitlements/v1/{pool_type}-pools", spec)

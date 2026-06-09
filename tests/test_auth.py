@@ -51,10 +51,10 @@ async def test_login_sets_access_token_in_env(tools):
     assert os.environ.get("HORIZON_ACCESS_TOKEN") == "tok-abc123"
 
 
-async def test_login_returns_both_tokens(tools):
+async def test_login_returns_tokens_and_hints(tools):
     mock_class, _ = make_http_client({
         "access_token": "tok-abc123",
-        "refresh_token": "ref-xyz",
+        "refresh_token": "ref-xyz000",
     })
 
     with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
@@ -67,8 +67,11 @@ async def test_login_returns_both_tokens(tools):
         )
 
     assert result["access_token"] == "tok-abc123"
-    assert result["refresh_token"] == "ref-xyz"
+    assert result["access_token_hint"] == "tok-abc1…"
+    assert result["refresh_token"] == "ref-xyz000"
+    assert result["refresh_token_hint"] == "ref-xyz0…"
     assert "SECURITY" in result
+    assert result["status"] == "authenticated"
 
 
 async def test_login_sends_secret_value_not_repr(tools):
@@ -115,8 +118,8 @@ async def test_login_raises_without_base_url(tools):
 
 # ── horizon_refresh_token ──────────────────────────────────────────────────────
 
-async def test_refresh_token_updates_env(tools):
-    mock_class, _ = make_http_client({"access_token": "new-tok-999"})
+async def test_refresh_token_updates_env_and_returns_hint(tools):
+    mock_class, _ = make_http_client({"access_token": "new-tok-999abc"})
 
     with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
          patch("horizon_mcp.tools.auth.reset_client"):
@@ -125,8 +128,11 @@ async def test_refresh_token_updates_env(tools):
             base_url="https://horizon.test.example.com",
         )
 
-    assert os.environ.get("HORIZON_ACCESS_TOKEN") == "new-tok-999"
-    assert result["access_token"] == "new-tok-999"
+    assert os.environ.get("HORIZON_ACCESS_TOKEN") == "new-tok-999abc"
+    assert result["access_token"] == "new-tok-999abc"
+    assert result["access_token_hint"] == "new-tok-…"
+    assert result["status"] == "token_refreshed"
+    assert "SECURITY" in result
 
 
 async def test_refresh_token_sends_secret_value(tools):

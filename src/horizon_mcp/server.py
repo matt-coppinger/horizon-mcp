@@ -4,7 +4,8 @@ import os
 from fastmcp import FastMCP
 from fastmcp.server.auth import StaticTokenVerifier
 
-from .tools import auth, config, entitlements, external, helpdesk, inventory, monitor
+from . import resources
+from .tools import auth, config, discovery, entitlements, external, helpdesk, inventory, monitor
 
 # When MCP_API_KEY is set, HTTP transport requires clients to send
 # Authorization: Bearer <MCP_API_KEY>. Stdio transport always skips auth.
@@ -42,8 +43,13 @@ Tool groups:
   Config       — connection servers, virtual centers, licenses, global policies, settings,
                  list_image_management (streams|versions|tags)
   Entitlements — list_pool_entitlements, get_pool_entitlement, set_pool_entitlements
-  External     — AD user/group search, domains, audit events
+  External     — AD user/group search, domains, audit events, vCenter resource discovery
   Help Desk    — diagnose_session (all diagnostics in one call), remote assistance
+  Discovery    — get_api_coverage (lists all tools, resources, and unsupported operations)
+
+Resources (read-only, horizon://<path>):
+  horizon://config/* — RBAC, authenticators, TrueSSO, settings, infrastructure config
+  horizon://monitor/* — App Volumes, event DB, RDS servers, SAML, TrueSSO, pods, datastores
 
 Always confirm with the user before performing destructive operations
 (logoff, rebuild, shutdown, delete).
@@ -52,8 +58,10 @@ Always confirm with the user before performing destructive operations
 
 auth.register(mcp)
 config.register(mcp)
+discovery.register(mcp)
 entitlements.register(mcp)
 external.register(mcp)
 helpdesk.register(mcp)
 inventory.register(mcp)
 monitor.register(mcp)
+resources.register(mcp)

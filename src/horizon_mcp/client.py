@@ -45,9 +45,10 @@ async def get_client() -> httpx.AsyncClient:
 async def reset_client() -> None:
     """Close and reset the shared client (call after token rotation)."""
     global _client
-    if _client is not None and not _client.is_closed:
-        await _client.aclose()
-    _client = None
+    async with _lock:
+        if _client is not None and not _client.is_closed:
+            await _client.aclose()
+        _client = None
 
 
 def _parse_error(resp: httpx.Response) -> str:
