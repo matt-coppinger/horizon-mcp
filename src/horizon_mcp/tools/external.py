@@ -52,6 +52,19 @@ def register(mcp: FastMCP) -> None:
         return await api_get("/external/v3/ad-domains") or []
 
     @mcp.tool()
+    async def list_ad_containers(
+        domain_id: Annotated[str, "AD domain ID — obtain from list_ad_domains"],
+    ) -> list:
+        """List AD containers (OUs) available in a domain for pool provisioning.
+
+        The rdn (relative distinguished name) from these results is used as the
+        ad_container_rdn in create_desktop_pool and create_rdsh_farm provisioning_settings
+        to control which OU newly provisioned computers are placed in.
+        This is the OU picker equivalent of what the Horizon Console shows during pool creation.
+        """
+        return await api_get(f"/external/v1/ad-domains/{domain_id}/ad-containers") or []
+
+    @mcp.tool()
     async def get_domain_netbios_map() -> dict:
         """Get a mapping of domain NETBIOS names to DNS names for all configured domains."""
         return await api_get("/external/v1/domains") or {}

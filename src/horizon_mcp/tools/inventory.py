@@ -125,6 +125,26 @@ def register(mcp: FastMCP) -> None:
         result = await api_delete(f"/inventory/v1/desktop-pools/{pool_id}")
         return result or {"success": True, "pool_id": pool_id}
 
+    @mcp.tool()
+    async def desktop_pool_action(
+        pool_ids: Annotated[list[str], "List of desktop pool IDs to act on"],
+        action: Annotated[
+            Literal["enable", "disable", "enable-provisioning", "disable-provisioning"],
+            "enable: allow new sessions. "
+            "disable: prevent new sessions (existing sessions continue). "
+            "enable-provisioning: resume VM provisioning. "
+            "disable-provisioning: pause VM provisioning — use during maintenance windows.",
+        ],
+    ) -> dict:
+        """Enable, disable, or toggle provisioning for one or more desktop pools.
+
+        enable/disable controls whether new user sessions can be established.
+        enable-provisioning/disable-provisioning controls whether new VMs are provisioned.
+        Disabling provisioning is the correct way to pause scale-out during maintenance.
+        """
+        result = await api_post(f"/inventory/v1/desktop-pools/action/{action}", pool_ids)
+        return result or {"success": True, "action": action, "pool_count": len(pool_ids)}
+
     # ── Machines ───────────────────────────────────────────────────────────────
 
     @mcp.tool()
@@ -215,6 +235,31 @@ def register(mcp: FastMCP) -> None:
             body = machine_ids
         result = await api_post(path, body)
         return result or {"success": True, "action": action, "machine_count": len(machine_ids)}
+
+    @mcp.tool()
+    async def assign_machine_users(
+        machine_id: Annotated[str, "Machine ID — obtain from list_machines"],
+        user_ids: Annotated[
+            list[str],
+            "AD user IDs to assign or unassign. Use search_ad_users_or_groups to find IDs.",
+        ],
+        action: Annotated[
+            Literal["assign", "unassign"],
+            "assign: assign users to this dedicated desktop. "
+            "unassign: remove existing user assignment.",
+        ],
+    ) -> dict:
+        """Assign or unassign users to a dedicated desktop machine.
+
+        Only applicable to machines in dedicated (non-floating) desktop pools.
+        A machine can only have one assigned user at a time in most pool configurations.
+        """
+        endpoint = "assign-users" if action == "assign" else "unassign-users"
+        result = await api_post(
+            f"/inventory/v1/machines/{machine_id}/action/{endpoint}",
+            {"user_ids": user_ids},
+        )
+        return result or {"success": True, "action": action, "machine_id": machine_id}
 
     # ── RDS Farms ──────────────────────────────────────────────────────────────
 
@@ -309,6 +354,23 @@ def register(mcp: FastMCP) -> None:
             )
         result = await api_delete(f"/inventory/v1/farms/{farm_id}")
         return result or {"success": True, "farm_id": farm_id}
+
+    @mcp.tool()
+    async def rdsh_farm_action(
+        farm_ids: Annotated[list[str], "List of RDS farm IDs to act on"],
+        action: Annotated[
+            Literal["enable", "disable"],
+            "enable: allow new sessions to this farm. "
+            "disable: prevent new sessions (existing sessions continue until they end).",
+        ],
+    ) -> dict:
+        """Enable or disable one or more RDS farms.
+
+        Disabling a farm prevents new sessions from being routed to it
+        without terminating existing sessions — useful for draining a farm before maintenance.
+        """
+        result = await api_post(f"/inventory/v1/farms/action/{action}", farm_ids)
+        return result or {"success": True, "action": action, "farm_count": len(farm_ids)}
 
     # ── Application Pools ──────────────────────────────────────────────────────
 
@@ -473,6 +535,25 @@ def register(mcp: FastMCP) -> None:
             params={"forced": str(forced).lower()},
         )
         return result or {"success": True, "session_count": len(session_ids)}
+
+    @mcp.tool()
+    async def reset_or_restart_sessions(
+        session_ids: Annotated[list[str], "List of session IDs to act on"],
+        action: Annotated[
+            Literal["reset", "restart"],
+            "reset: hard power-cycle the VM (immediate, may cause data loss). "
+            "restart: graceful reboot of the VM (user is logged off first).",
+        ],
+    ) -> dict:
+        """Reset or restart the virtual machine backing one or more sessions.
+
+        CAUTION: Both actions will terminate the user's session.
+        reset is a hard power-cycle and may cause data loss.
+        restart attempts a graceful reboot but the session will still end.
+        Always confirm with the user before calling this.
+        """
+        result = await api_post(f"/inventory/v1/sessions/action/{action}", session_ids)
+        return result or {"success": True, "action": action, "session_count": len(session_ids)}
 
     @mcp.tool()
     async def send_message_to_sessions(

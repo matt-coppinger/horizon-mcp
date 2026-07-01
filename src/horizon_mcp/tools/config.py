@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 
-from ..client import api_get, api_post
+from ..client import api_get, api_post, api_put
 
 
 def register(mcp: FastMCP) -> None:
@@ -50,6 +50,56 @@ def register(mcp: FastMCP) -> None:
         """Get global VDI policies including USB redirection, multimedia redirection,
         clipboard settings, and other environment-wide policy settings."""
         return await api_get("/config/v1/global-policies")
+
+    @mcp.tool()
+    async def update_global_policies(
+        spec: Annotated[
+            dict,
+            "Updated global policies object. Call get_global_policies first, modify only the "
+            "fields you intend to change, then pass the full object here.",
+        ],
+    ) -> dict:
+        """Update global VDI policies (USB redirection, clipboard, multimedia redirection).
+
+        Always call get_global_policies first to read current values.
+        Only modify the specific fields you intend to change — pass the full object back.
+        """
+        result = await api_put("/config/v1/global-policies", spec)
+        return result or {"success": True}
+
+    @mcp.tool()
+    async def update_settings(
+        setting_type: Annotated[
+            Literal["general", "security", "client", "feature", "agent-restriction"],
+            "Settings section to update. Read current values via the corresponding "
+            "horizon://config/settings/<type> resource before modifying.",
+        ],
+        spec: Annotated[
+            dict,
+            "Updated settings object. Read current values first, modify only the fields "
+            "you intend to change, then pass the full object here.",
+        ],
+    ) -> dict:
+        """Update a Horizon settings section.
+
+        setting_type maps to these resources and endpoints:
+          general          → horizon://config/settings/general
+          security         → horizon://config/settings/security
+          client           → horizon://config/settings/client
+          feature          → horizon://config/settings/feature
+          agent-restriction → horizon://config/settings/agent-restriction
+
+        Always read the current settings first and only modify the fields you intend to change.
+        """
+        paths = {
+            "general": "/config/v1/settings/general",
+            "security": "/config/v1/settings/security",
+            "client": "/config/v1/settings/client-settings",
+            "feature": "/config/v1/settings/feature",
+            "agent-restriction": "/config/v1/settings/agent-restriction-settings",
+        }
+        result = await api_put(paths[setting_type], spec)
+        return result or {"success": True, "setting_type": setting_type}
 
     # ── Licenses ───────────────────────────────────────────────────────────────
 
