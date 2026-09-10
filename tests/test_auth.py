@@ -6,6 +6,7 @@ from pydantic import SecretStr
 
 from .conftest import MockFastMCP
 from horizon_mcp.tools import auth
+from horizon_mcp.tools.auth import _resolve_base_url
 
 
 @pytest.fixture
@@ -29,6 +30,35 @@ def make_http_client(json_data, status_code=200):
 
     mock_class = MagicMock(return_value=mock_http)
     return mock_class, mock_http
+
+
+# ── _resolve_base_url ────────────────────────────────────────────────────────────
+
+def test_resolve_base_url_allows_match_with_configured():
+    with patch.dict(os.environ, {"HORIZON_BASE_URL": "https://horizon.test.example.com"}):
+        assert _resolve_base_url("https://horizon.test.example.com") == "https://horizon.test.example.com"
+
+
+def test_resolve_base_url_allows_omitted_when_configured():
+    with patch.dict(os.environ, {"HORIZON_BASE_URL": "https://horizon.test.example.com"}):
+        assert _resolve_base_url("") == "https://horizon.test.example.com"
+
+
+def test_resolve_base_url_allows_bootstrap_when_unconfigured():
+    with patch.dict(os.environ, {"HORIZON_BASE_URL": ""}):
+        assert _resolve_base_url("https://new-horizon.example.com") == "https://new-horizon.example.com"
+
+
+def test_resolve_base_url_rejects_mismatch_with_configured():
+    with patch.dict(os.environ, {"HORIZON_BASE_URL": "https://horizon.test.example.com"}):
+        with pytest.raises(ValueError, match="does not match"):
+            _resolve_base_url("https://attacker.example.com")
+
+
+def test_resolve_base_url_raises_when_neither_provided():
+    with patch.dict(os.environ, {"HORIZON_BASE_URL": ""}):
+        with pytest.raises(ValueError, match="Provide base_url"):
+            _resolve_base_url("")
 
 
 # ── horizon_login ──────────────────────────────────────────────────────────────
@@ -116,6 +146,25 @@ async def test_login_raises_without_base_url(tools):
             )
 
 
+async def test_login_rejects_base_url_mismatch_without_sending_credentials(tools):
+    """A base_url that differs from the configured HORIZON_BASE_URL must be rejected
+    before any HTTP request is made, so credentials never reach the mismatched host."""
+    mock_class, mock_http = make_http_client({"access_token": "tok", "refresh_token": "ref"})
+
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
+         patch("horizon_mcp.tools.auth.reset_client"), \
+         patch.dict(os.environ, {"HORIZON_BASE_URL": "https://horizon.test.example.com"}):
+        with pytest.raises(ValueError, match="does not match"):
+            await tools["horizon_login"](
+                username="jsmith",
+                password=SecretStr("my-real-password"),
+                domain="CORP",
+                base_url="https://attacker.example.com",
+            )
+
+    mock_http.post.assert_not_called()
+
+
 # ── horizon_refresh_token ──────────────────────────────────────────────────────
 
 async def test_refresh_token_updates_env_and_returns_hint(tools):
@@ -162,6 +211,21 @@ async def test_refresh_token_raises_on_failure(tools):
             )
 
 
+async def test_refresh_token_rejects_base_url_mismatch_without_sending_token(tools):
+    mock_class, mock_http = make_http_client({"access_token": "tok"})
+
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
+         patch("horizon_mcp.tools.auth.reset_client"), \
+         patch.dict(os.environ, {"HORIZON_BASE_URL": "https://horizon.test.example.com"}):
+        with pytest.raises(ValueError, match="does not match"):
+            await tools["horizon_refresh_token"](
+                refresh_token=SecretStr("my-refresh-token"),
+                base_url="https://attacker.example.com",
+            )
+
+    mock_http.post.assert_not_called()
+
+
 # ── horizon_logout ─────────────────────────────────────────────────────────────
 
 async def test_logout_clears_access_token_env(tools):
@@ -189,3 +253,18 @@ async def test_logout_raises_on_failure(tools):
                 refresh_token=SecretStr("ref"),
                 base_url="https://horizon.test.example.com",
             )
+
+
+async def test_logout_rejects_base_url_mismatch_without_sending_token(tools):
+    mock_class, mock_http = make_http_client({}, status_code=200)
+
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
+         patch("horizon_mcp.tools.auth.reset_client"), \
+         patch.dict(os.environ, {"HORIZON_BASE_URL": "https://horizon.test.example.com"}):
+        with pytest.raises(ValueError, match="does not match"):
+            await tools["horizon_logout"](
+                refresh_token=SecretStr("ref-tok"),
+                base_url="https://attacker.example.com",
+            )
+
+    mock_http.post.assert_not_called()

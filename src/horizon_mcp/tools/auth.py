@@ -9,6 +9,30 @@ from pydantic import SecretStr
 from ..client import reset_client
 
 
+def _resolve_base_url(base_url: str) -> str:
+    """Resolve the effective Horizon server URL for an auth call.
+
+    base_url is an MCP tool argument and therefore untrusted (it can be
+    influenced by prompt injection reaching the agent that drives this
+    server). Once HORIZON_BASE_URL is configured, silently honoring a
+    different caller-supplied base_url would let an attacker redirect
+    login/refresh/logout calls — and the credentials or tokens in their
+    request bodies — to a host of their choosing. So a caller-supplied
+    value is only accepted to bootstrap the server before HORIZON_BASE_URL
+    is set; once it's set, base_url must match it exactly.
+    """
+    configured = os.environ.get("HORIZON_BASE_URL", "").rstrip("/")
+    url = (base_url or configured).rstrip("/")
+    if not url:
+        raise ValueError("Provide base_url or set the HORIZON_BASE_URL environment variable.")
+    if configured and url != configured:
+        raise ValueError(
+            f"base_url ({url}) does not match the configured HORIZON_BASE_URL ({configured}). "
+            "Omit base_url to use the configured server, or update HORIZON_BASE_URL to change it."
+        )
+    return url
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def horizon_login(
@@ -33,11 +57,7 @@ def register(mcp: FastMCP) -> None:
         (HORIZON_ACCESS_TOKEN env var), then clear it from the conversation.
         Treat both tokens as passwords — do not share or log them.
         """
-        url = (base_url or os.environ.get("HORIZON_BASE_URL", "")).rstrip("/")
-        if not url:
-            raise ValueError(
-                "Provide base_url or set the HORIZON_BASE_URL environment variable."
-            )
+        url = _resolve_base_url(base_url)
         verify = os.environ.get("HORIZON_VERIFY_SSL", "true").lower() != "false"
 
         async with httpx.AsyncClient(verify=verify, timeout=15.0) as http:
@@ -82,11 +102,7 @@ def register(mcp: FastMCP) -> None:
         Use this before the current access token expires (~8 hours) to maintain
         an active session without re-entering credentials.
         """
-        url = (base_url or os.environ.get("HORIZON_BASE_URL", "")).rstrip("/")
-        if not url:
-            raise ValueError(
-                "Provide base_url or set the HORIZON_BASE_URL environment variable."
-            )
+        url = _resolve_base_url(base_url)
         verify = os.environ.get("HORIZON_VERIFY_SSL", "true").lower() != "false"
 
         async with httpx.AsyncClient(verify=verify, timeout=15.0) as http:
@@ -122,11 +138,7 @@ def register(mcp: FastMCP) -> None:
         ] = "",
     ) -> dict:
         """Invalidate the current Horizon session (access + refresh tokens)."""
-        url = (base_url or os.environ.get("HORIZON_BASE_URL", "")).rstrip("/")
-        if not url:
-            raise ValueError(
-                "Provide base_url or set the HORIZON_BASE_URL environment variable."
-            )
+        url = _resolve_base_url(base_url)
         token = os.environ.get("HORIZON_ACCESS_TOKEN", "")
         verify = os.environ.get("HORIZON_VERIFY_SSL", "true").lower() != "false"
         headers = {"Authorization": f"Bearer {token}"} if token else {}
