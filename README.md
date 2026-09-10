@@ -2,6 +2,36 @@
 
 MCP (Model Context Protocol) server for [Omnissa Horizon](https://www.omnissa.com/products/horizon/) VDI management. Exposes the Horizon REST API (version 2512) as MCP tools covering inventory, monitoring, configuration, entitlements, Active Directory, and help desk functions.
 
+## Quickstart
+
+The fastest path to a working setup, using Claude Code with stdio transport:
+
+1. **Clone and install:**
+   ```bash
+   git clone https://github.com/matt-coppinger/horizon-mcp.git
+   cd horizon-mcp
+   uv sync
+   ```
+2. **Register the server** — add this to `~/.claude/settings.json` (see [Configuration](#configuration) below for what each variable means):
+   ```json
+   {
+     "mcpServers": {
+       "horizon": {
+         "command": "uv",
+         "args": ["run", "--project", "/absolute/path/to/horizon-mcp", "horizon-mcp"],
+         "env": {
+           "HORIZON_BASE_URL": "https://horizon.corp.example.com"
+         }
+       }
+     }
+   }
+   ```
+   Use the absolute path to where you cloned the repo. Omit `HORIZON_ACCESS_TOKEN` for now — you'll get one in the next step.
+3. **Restart Claude Code**, then get a token by asking it to call `horizon_login` (see [Getting an Access Token](#getting-an-access-token)) with your AD credentials.
+4. **Verify it works** — ask Claude Code to call `list_desktop_pools` or `get_infrastructure_health`. If you get real data back, you're set. Copy the `access_token` from step 3 into `HORIZON_ACCESS_TOKEN` in your config so you don't have to log in again on restart.
+
+Running the server standalone over HTTP instead (for remote/multi-user access, or in Docker)? See [HTTP (remote / multi-user)](#http-remote--multi-user) and [Docker](#docker).
+
 ## Requirements
 
 - Python 3.11+
@@ -111,6 +141,27 @@ Clients (Claude Desktop, Claude Code) pass the key in their MCP config:
 stdio transport always skips authentication regardless of `MCP_API_KEY`.
 
 > **HTTP transport security:** For any non-localhost deployment, place the server behind a reverse proxy (nginx, Caddy, Traefik) that enforces TLS. Each user should run a separate server instance with their own `HORIZON_ACCESS_TOKEN` and `MCP_API_KEY` to maintain session isolation.
+
+### Docker
+
+The provided `Dockerfile` runs the server with `streamable-http` transport (Docker containers don't have an interactive stdio channel for an MCP client to attach to, so HTTP is the practical option here).
+
+```bash
+docker build -t horizon-mcp .
+docker run -d -p 8000:8000 \
+  -e HORIZON_BASE_URL=https://horizon.corp.example.com \
+  -e HORIZON_ACCESS_TOKEN=your-token \
+  -e MCP_API_KEY=your-secret-key \
+  horizon-mcp
+```
+
+Or with `docker-compose.yml` (reads `HORIZON_BASE_URL`, `HORIZON_ACCESS_TOKEN`, `HORIZON_VERIFY_SSL`, and `MCP_API_KEY` from your shell environment or a `.env` file):
+
+```bash
+HORIZON_BASE_URL=https://horizon.corp.example.com MCP_API_KEY=your-secret-key docker compose up -d
+```
+
+`MCP_API_KEY` is required by `docker-compose.yml` on purpose — a containerized deployment is reachable over the network by definition, so leaving the endpoint unauthenticated is not a safe default (see [Security Notes](#security-notes)). Point your MCP client at `http://host:8000/mcp` with the matching `Authorization: Bearer` header as shown above.
 
 ## Getting an Access Token
 
