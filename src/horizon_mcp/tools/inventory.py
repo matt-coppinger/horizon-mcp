@@ -1,4 +1,5 @@
 """Inventory tools: desktop pools, machines, sessions, farms, application pools."""
+import asyncio
 import os
 from typing import Annotated, Literal
 
@@ -368,9 +369,20 @@ def register(mcp: FastMCP) -> None:
 
         Disabling a farm prevents new sessions from being routed to it
         without terminating existing sessions — useful for draining a farm before maintenance.
+
+        Unlike desktop pools, farms have no bulk enable/disable endpoint — this sends one
+        PUT per farm and reports per-farm results if any fail.
         """
-        result = await api_post(f"/inventory/v1/farms/action/{action}", farm_ids)
-        return result or {"success": True, "action": action, "farm_count": len(farm_ids)}
+        enabled = action == "enable"
+        coros = [api_put(f"/inventory/v1/farms/{farm_id}", {"enabled": enabled}) for farm_id in farm_ids]
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        errors = {farm_id: str(r) for farm_id, r in zip(farm_ids, results) if isinstance(r, Exception)}
+        return {
+            "action": action,
+            "farm_count": len(farm_ids),
+            "succeeded": len(farm_ids) - len(errors),
+            **({"errors": errors} if errors else {}),
+        }
 
     # ── Application Pools ──────────────────────────────────────────────────────
 

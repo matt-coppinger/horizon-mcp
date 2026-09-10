@@ -67,17 +67,33 @@ async def test_set_pool_entitlements_add_uses_post(tools):
 
 
 async def test_set_pool_entitlements_replace_uses_put(tools):
+    # replace is only valid for desktop pools — the Horizon API has no PUT
+    # endpoint for /entitlements/v1/application-pools.
     with patch("horizon_mcp.tools.entitlements.api_post") as mock_post, \
          patch("horizon_mcp.tools.entitlements.api_put", return_value=None) as mock_put, \
          patch("horizon_mcp.tools.entitlements.api_delete") as mock_delete:
         result = await tools["set_pool_entitlements"](
-            pool_id="pool-1", pool_type="application", action="replace",
+            pool_id="pool-1", pool_type="desktop", action="replace",
             ad_user_or_group_ids=["group-b"],
         )
     mock_put.assert_called_once()
     mock_post.assert_not_called()
     mock_delete.assert_not_called()
     assert result["action"] == "replace"
+
+
+async def test_set_pool_entitlements_replace_raises_for_application_pool(tools):
+    with patch("horizon_mcp.tools.entitlements.api_post") as mock_post, \
+         patch("horizon_mcp.tools.entitlements.api_put") as mock_put, \
+         patch("horizon_mcp.tools.entitlements.api_delete") as mock_delete:
+        with pytest.raises(ValueError, match="not supported for application pools"):
+            await tools["set_pool_entitlements"](
+                pool_id="pool-1", pool_type="application", action="replace",
+                ad_user_or_group_ids=["group-b"],
+            )
+    mock_post.assert_not_called()
+    mock_put.assert_not_called()
+    mock_delete.assert_not_called()
 
 
 async def test_set_pool_entitlements_remove_uses_delete(tools):

@@ -1,6 +1,6 @@
 # Horizon MCP Server
 
-MCP (Model Context Protocol) server for [Omnissa Horizon](https://www.omnissa.com/products/horizon/) VDI management. Exposes the Horizon REST API (version 2512) as MCP tools covering inventory, monitoring, configuration, entitlements, Active Directory, and help desk functions.
+MCP (Model Context Protocol) server for [Omnissa Horizon](https://www.omnissa.com/products/horizon/) VDI management. Exposes the Horizon REST API as MCP tools covering inventory, monitoring, configuration, entitlements, Active Directory, and help desk functions. Verified against the Horizon Server REST API spec for versions 2512 through 2606 — call `get_api_coverage` for the full list of supported tools and known gaps.
 
 ## Quickstart
 
@@ -198,14 +198,17 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `create_desktop_pool` | Create a new desktop pool (VDI or RDS, automated or manual) |
 | `update_desktop_pool` | Update an existing desktop pool's configuration |
 | `delete_desktop_pool` | Delete a desktop pool and all its machines ⚠️ — requires `confirm=True` |
+| `desktop_pool_action` | Enable/disable a pool, or enable/disable-provisioning |
 | `list_machines` | List virtual desktops (filterable by pool, state) |
 | `get_machine` | Get machine details |
 | `machine_action` | Shutdown, restart, reset, rebuild, recover, maintenance |
+| `assign_machine_users` | Assign or unassign users to a dedicated (non-floating) desktop |
 | `list_rdsh_farms` | List RDS farms |
 | `get_rdsh_farm` | Get farm details |
 | `create_rdsh_farm` | Create a new RDS farm (automated or manual) |
 | `update_rdsh_farm` | Update an existing RDS farm's configuration |
 | `delete_rdsh_farm` | Delete an RDS farm and all its servers ⚠️ — requires `confirm=True` |
+| `rdsh_farm_action` | Enable or disable one or more RDS farms |
 | `list_application_pools` | List published application pools |
 | `get_application_pool` | Get application pool details |
 | `create_application_pool` | Publish a new application pool from an RDS farm |
@@ -215,6 +218,7 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `get_session` | Get session details |
 | `disconnect_sessions` | Disconnect sessions (keep running) |
 | `logoff_sessions` | Log off sessions (terminates apps) |
+| `reset_or_restart_sessions` | Hard-reset or gracefully restart the VMs backing sessions |
 | `send_message_to_sessions` | Send pop-up notification to sessions |
 
 ### Monitor
@@ -245,7 +249,7 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 |---|---|
 | `list_pool_entitlements` | All entitlements for desktop or application pools |
 | `get_pool_entitlement` | Users/groups for a specific pool |
-| `set_pool_entitlements` | Add, replace, or remove entitlements (desktop or application) |
+| `set_pool_entitlements` | Add, replace, or remove entitlements (desktop or application) — `replace` is desktop-pool only, the Horizon API has no bulk-replace endpoint for application pools |
 
 ### External / Active Directory
 | Tool | Description |
