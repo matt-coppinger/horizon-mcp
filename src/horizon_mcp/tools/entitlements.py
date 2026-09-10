@@ -47,7 +47,18 @@ def register(mcp: FastMCP) -> None:
         CAUTION: action='replace' removes any existing entitlements not in the provided list.
         CAUTION: action='remove' immediately revokes access for the specified principals.
         Always confirm with the user before using replace or remove.
+
+        NOTE: action='replace' is only supported for desktop pools — the Horizon API has
+        no bulk-replace endpoint for application pools.
         """
+        if action == "replace" and pool_type == "application":
+            raise ValueError(
+                "action='replace' is not supported for application pools — the Horizon "
+                "API has no PUT endpoint for /entitlements/v1/application-pools. Call "
+                "get_pool_entitlement first to see current entitlements, then use "
+                "action='remove' for principals to revoke and action='add' for principals "
+                "to grant."
+            )
         if action == "replace" and not ad_user_or_group_ids:
             raise ValueError(
                 "action='replace' with an empty list would remove ALL entitlements from "

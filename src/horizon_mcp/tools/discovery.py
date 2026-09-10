@@ -24,7 +24,8 @@ _COVERAGE: dict = {
             "create_rdsh_farm — create a new RDS farm (spec dict)",
             "update_rdsh_farm — update farm configuration",
             "delete_rdsh_farm — delete farm and all servers (requires confirm=True)",
-            "rdsh_farm_action — enable or disable an RDS farm",
+            "rdsh_farm_action — enable or disable an RDS farm (best-effort partial update; "
+            "may 400 on instances that strictly enforce the full farm update schema)",
             "list_application_pools — list published application pools",
             "get_application_pool — get application pool details by ID",
             "create_application_pool — publish a new application pool from an RDS farm",
@@ -149,8 +150,9 @@ _COVERAGE: dict = {
     "not_yet_supported": [
         "Federation/CPA management (initialize/join/unjoin pods, home sites, pod assignments)",
         "Image push/apply workflows (schedule-push-image, apply-image, promote-pending-image)",
-        "RDS server management (list, recover, register individual RDS servers within farms)",
-        "Persistent disks CRUD",
+        "RDS server management (list, recover, register/remove individual RDS servers within "
+        "farms, schedule/cancel farm maintenance, validate installed applications)",
+        "Persistent disks CRUD, and machine-level attach/detach-persistent-disk actions",
         "Physical machine management",
         "Global sessions (CPA cross-pod session list and actions)",
         "Global desktop/application entitlements (CPA)",
@@ -162,6 +164,21 @@ _COVERAGE: dict = {
         "Workspace ONE Assist integration",
         "CEIP/syslog/URL-redirection write operations (resources expose read-only)",
         "Key agreement / smart card login",
+        "Virtual Center CRUD — list_virtual_centers is read-only; no way to register, update, "
+        "remove a vCenter, or validate its certificate",
+        "Gateway CRUD — list_gateways is read-only; no way to register, update, remove a UAG, "
+        "or manage its certificate",
+        "Instant clone domain account CRUD — list_ic_domain_accounts is read-only; no create/"
+        "delete, and ad_sites sub-resource is not exposed",
+        "License actions (e.g. reset-named-user-metrics)",
+        "Image management assets (im-assets) — separate resource type from the streams/"
+        "versions/tags covered by list_image_management, not covered at all",
+        "Agent/server installer package management, application icons, category folders",
+        "Per-pool policy overrides (desktop-pools/{id}/policies and .../policies/overrides)",
+        "Manual desktop pool machine membership (add/remove machines by ID or name)",
+        "Desktop pool provisioning task tracking (list/cancel/pause/resume push-image tasks)",
+        "Machine alias assignment (assign/unassign-aliases) and agent-upgrade scheduling "
+        "(schedule/cancel-agent-upgrade, agent-upgrade-tasks)",
     ],
 }
 

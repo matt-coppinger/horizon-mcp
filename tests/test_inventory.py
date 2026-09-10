@@ -394,6 +394,44 @@ async def test_delete_rdsh_farm_confirm_true_deletes_correct_path(tools):
     assert result == {"success": True, "farm_id": "farm-xyz"}
 
 
+# ── rdsh_farm_action ────────────────────────────────────────────────────────────
+# Farms have no bulk enable/disable endpoint (unlike desktop pools) — this sends
+# one PUT per farm with {"enabled": ...} in the body.
+
+@pytest.mark.parametrize("action,enabled", [("enable", True), ("disable", False)])
+async def test_rdsh_farm_action_puts_enabled_per_farm(tools, action, enabled):
+    captured: list = []
+
+    async def fake_put(path, body):
+        captured.append((path, body))
+        return None
+
+    with patch("horizon_mcp.tools.inventory.api_put", side_effect=fake_put):
+        result = await tools["rdsh_farm_action"](farm_ids=["farm-1", "farm-2"], action=action)
+
+    assert captured == [
+        ("/inventory/v1/farms/farm-1", {"enabled": enabled}),
+        ("/inventory/v1/farms/farm-2", {"enabled": enabled}),
+    ]
+    assert result == {"action": action, "farm_count": 2, "succeeded": 2}
+
+
+async def test_rdsh_farm_action_reports_partial_failure(tools):
+    async def fake_put(path, body):
+        if path.endswith("farm-bad"):
+            raise ValueError("boom")
+        return None
+
+    with patch("horizon_mcp.tools.inventory.api_put", side_effect=fake_put):
+        result = await tools["rdsh_farm_action"](
+            farm_ids=["farm-1", "farm-bad"], action="disable",
+        )
+
+    assert result["farm_count"] == 2
+    assert result["succeeded"] == 1
+    assert "farm-bad" in result["errors"]
+
+
 # ── create_application_pool ────────────────────────────────────────────────────
 
 async def test_create_application_pool_required_fields_only(tools):

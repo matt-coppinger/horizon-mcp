@@ -1,4 +1,5 @@
 """Inventory tools: desktop pools, machines, sessions, farms, application pools."""
+import asyncio
 import os
 from typing import Annotated, Literal
 
@@ -368,9 +369,29 @@ def register(mcp: FastMCP) -> None:
 
         Disabling a farm prevents new sessions from being routed to it
         without terminating existing sessions — useful for draining a farm before maintenance.
+
+        Unlike desktop pools, farms have no bulk enable/disable endpoint — this sends one
+        PUT per farm with just {"enabled": ...} in the body and reports per-farm results
+        if any fail.
+
+        CAVEAT: the Horizon API's farm update schema formally requires several other fields
+        (access_group_id, display_name, display_protocol_settings, server_error_threshold,
+        session_settings, use_custom_script_for_load_balancing) that this tool does not send —
+        some of those aren't even retrievable from get_rdsh_farm, so a full spec can't always
+        be reconstructed. If a farm's Horizon instance enforces that requirement strictly,
+        this call will fail per-farm with a 400 error naming the missing field(s); the errors
+        field in the response will show which farms failed and why.
         """
-        result = await api_post(f"/inventory/v1/farms/action/{action}", farm_ids)
-        return result or {"success": True, "action": action, "farm_count": len(farm_ids)}
+        enabled = action == "enable"
+        coros = [api_put(f"/inventory/v1/farms/{farm_id}", {"enabled": enabled}) for farm_id in farm_ids]
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        errors = {farm_id: str(r) for farm_id, r in zip(farm_ids, results) if isinstance(r, Exception)}
+        return {
+            "action": action,
+            "farm_count": len(farm_ids),
+            "succeeded": len(farm_ids) - len(errors),
+            **({"errors": errors} if errors else {}),
+        }
 
     # ── Application Pools ──────────────────────────────────────────────────────
 
