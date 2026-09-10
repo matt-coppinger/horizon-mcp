@@ -371,7 +371,16 @@ def register(mcp: FastMCP) -> None:
         without terminating existing sessions — useful for draining a farm before maintenance.
 
         Unlike desktop pools, farms have no bulk enable/disable endpoint — this sends one
-        PUT per farm and reports per-farm results if any fail.
+        PUT per farm with just {"enabled": ...} in the body and reports per-farm results
+        if any fail.
+
+        CAVEAT: the Horizon API's farm update schema formally requires several other fields
+        (access_group_id, display_name, display_protocol_settings, server_error_threshold,
+        session_settings, use_custom_script_for_load_balancing) that this tool does not send —
+        some of those aren't even retrievable from get_rdsh_farm, so a full spec can't always
+        be reconstructed. If a farm's Horizon instance enforces that requirement strictly,
+        this call will fail per-farm with a 400 error naming the missing field(s); the errors
+        field in the response will show which farms failed and why.
         """
         enabled = action == "enable"
         coros = [api_put(f"/inventory/v1/farms/{farm_id}", {"enabled": enabled}) for farm_id in farm_ids]

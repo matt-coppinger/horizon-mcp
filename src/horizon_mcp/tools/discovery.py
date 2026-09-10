@@ -24,7 +24,8 @@ _COVERAGE: dict = {
             "create_rdsh_farm — create a new RDS farm (spec dict)",
             "update_rdsh_farm — update farm configuration",
             "delete_rdsh_farm — delete farm and all servers (requires confirm=True)",
-            "rdsh_farm_action — enable or disable an RDS farm",
+            "rdsh_farm_action — enable or disable an RDS farm (best-effort partial update; "
+            "may 400 on instances that strictly enforce the full farm update schema)",
             "list_application_pools — list published application pools",
             "get_application_pool — get application pool details by ID",
             "create_application_pool — publish a new application pool from an RDS farm",

@@ -208,7 +208,7 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `create_rdsh_farm` | Create a new RDS farm (automated or manual) |
 | `update_rdsh_farm` | Update an existing RDS farm's configuration |
 | `delete_rdsh_farm` | Delete an RDS farm and all its servers ⚠️ — requires `confirm=True` |
-| `rdsh_farm_action` | Enable or disable one or more RDS farms |
+| `rdsh_farm_action` | Enable or disable one or more RDS farms — may fail on Horizon instances that strictly enforce the full farm update schema (see docstring) |
 | `list_application_pools` | List published application pools |
 | `get_application_pool` | Get application pool details |
 | `create_application_pool` | Publish a new application pool from an RDS farm |
