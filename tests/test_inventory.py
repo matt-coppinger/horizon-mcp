@@ -102,14 +102,14 @@ async def test_machine_action_force_false_does_not_raise_for_non_applicable(tool
 
 
 @pytest.mark.parametrize("action", ["rebuild", "reset", "archive"])
-async def test_machine_action_raises_when_bulk_destructive_exceeds_limit(tools):
+async def test_machine_action_raises_when_bulk_destructive_exceeds_limit(tools, action):
     many_ids = [f"m-{i}" for i in range(21)]
     with pytest.raises(ValueError, match="Refusing to"):
         await tools["machine_action"](machine_ids=many_ids, action=action)
 
 
 @pytest.mark.parametrize("action", ["rebuild", "reset", "archive"])
-async def test_machine_action_allows_bulk_destructive_at_limit(tools):
+async def test_machine_action_allows_bulk_destructive_at_limit(tools, action):
     ids_at_limit = [f"m-{i}" for i in range(20)]
     with patch("horizon_mcp.tools.inventory.api_post", return_value=None):
         result = await tools["machine_action"](machine_ids=ids_at_limit, action=action)
@@ -117,7 +117,7 @@ async def test_machine_action_allows_bulk_destructive_at_limit(tools):
 
 
 @pytest.mark.parametrize("action", ["shutdown", "restart", "enter_maintenance", "exit_maintenance"])
-async def test_machine_action_no_bulk_limit_for_non_destructive(tools):
+async def test_machine_action_no_bulk_limit_for_non_destructive(tools, action):
     many_ids = [f"m-{i}" for i in range(50)]
     with patch("horizon_mcp.tools.inventory.api_post", return_value=None):
         result = await tools["machine_action"](machine_ids=many_ids, action=action)
@@ -490,7 +490,7 @@ async def test_delete_application_pool_deletes_correct_path(tools):
         return None
 
     with patch("horizon_mcp.tools.inventory.api_delete", side_effect=fake_delete):
-        result = await tools["delete_application_pool"](pool_id="app-abc")
+        result = await tools["delete_application_pool"](pool_id="app-abc", confirm=True)
 
     assert captured["path"] == "/inventory/v1/application-pools/app-abc"
     assert result == {"success": True, "pool_id": "app-abc"}
