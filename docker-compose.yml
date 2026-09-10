@@ -1,0 +1,11 @@
+services:
+  horizon-mcp:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      HORIZON_BASE_URL: ${HORIZON_BASE_URL:?set HORIZON_BASE_URL in .env or the environment}
+      HORIZON_ACCESS_TOKEN: ${HORIZON_ACCESS_TOKEN:-}
+      HORIZON_VERIFY_SSL: ${HORIZON_VERIFY_SSL:-true}
+      MCP_API_KEY: ${MCP_API_KEY:?set MCP_API_KEY so the endpoint isn't left unauthenticated}
+    restart: unless-stopped
