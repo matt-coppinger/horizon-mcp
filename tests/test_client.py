@@ -1,11 +1,20 @@
-"""Tests for client.py: _parse_error, get_client env validation, reset_client."""
+"""Tests for client.py: _parse_error, _reject_traversal, get_client env validation, reset_client."""
 import os
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
-from horizon_mcp.client import _parse_error, get_client, reset_client
+from horizon_mcp.client import (
+    _parse_error,
+    _reject_traversal,
+    api_delete,
+    api_get,
+    api_post,
+    api_put,
+    get_client,
+    reset_client,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -66,6 +75,73 @@ def test_parse_error_empty_text_uses_status_code():
     resp = make_response(text="", status_code=503)
     result = _parse_error(resp)
     assert "503" in result
+
+
+# ── _reject_traversal ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/inventory/v1/desktop-pools/../../../config/v1/global-policies",
+        "/inventory/v1/farms/..%2f..%2fconfig/v1/global-policies",
+        "/inventory/v1/farms/%2e%2e/%2e%2e/config/v1/global-policies",
+        "/inventory/v1/machines/./action/foo",
+    ],
+)
+def test_reject_traversal_blocks_dot_segments(path):
+    with pytest.raises(ValueError, match="dot-segment"):
+        _reject_traversal(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/inventory/v1/desktop-pools/abc-123",
+        "/inventory/v1/farms/farm.prod.01",
+        "/entitlements/v1/desktop-pools",
+    ],
+)
+def test_reject_traversal_allows_normal_paths(path):
+    _reject_traversal(path)  # should not raise
+
+
+async def _mock_client(monkeypatch, method: str):
+    resp = MagicMock(spec=httpx.Response)
+    resp.is_success = True
+    resp.content = b""
+    client = MagicMock()
+    setattr(client, method, AsyncMock(return_value=resp))
+    client.request = AsyncMock(return_value=resp)
+    monkeypatch.setattr("horizon_mcp.client.get_client", AsyncMock(return_value=client))
+    return client
+
+
+async def test_api_get_raises_before_dispatch_on_traversal(monkeypatch):
+    client = await _mock_client(monkeypatch, "get")
+    with pytest.raises(ValueError, match="dot-segment"):
+        await api_get("/inventory/v1/desktop-pools/../../config/v1/global-policies")
+    client.get.assert_not_called()
+
+
+async def test_api_put_raises_before_dispatch_on_traversal(monkeypatch):
+    client = await _mock_client(monkeypatch, "put")
+    with pytest.raises(ValueError, match="dot-segment"):
+        await api_put("/inventory/v1/desktop-pools/../../config/v1/global-policies", {"evil": "spec"})
+    client.put.assert_not_called()
+
+
+async def test_api_delete_raises_before_dispatch_on_traversal(monkeypatch):
+    client = await _mock_client(monkeypatch, "delete")
+    with pytest.raises(ValueError, match="dot-segment"):
+        await api_delete("/inventory/v1/farms/../../config/v1/global-policies")
+    client.request.assert_not_called()
+
+
+async def test_api_post_raises_before_dispatch_on_traversal(monkeypatch):
+    client = await _mock_client(monkeypatch, "post")
+    with pytest.raises(ValueError, match="dot-segment"):
+        await api_post("/inventory/v1/machines/../../config/v1/global-policies/action/x")
+    client.post.assert_not_called()
 
 
 # ── get_client ─────────────────────────────────────────────────────────────────

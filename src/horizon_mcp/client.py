@@ -2,6 +2,7 @@
 import asyncio
 import os
 from typing import Any
+from urllib.parse import unquote
 
 import httpx
 
@@ -51,6 +52,22 @@ async def reset_client() -> None:
         _client = None
 
 
+def _reject_traversal(path: str) -> None:
+    """Reject request paths containing dot-segments.
+
+    Tool wrappers build paths by interpolating caller-supplied IDs
+    (e.g. pool_id, farm_id) directly into an f-string. httpx resolves
+    "." and ".." dot-segments per RFC 3986 before dispatching the
+    request, so an ID containing "../" can redirect the request to a
+    completely different REST endpoint than the tool intends. Checking
+    every path here — the single choke point all api_* calls pass
+    through — catches this regardless of which tool built the path.
+    """
+    decoded = unquote(path)
+    if any(segment in (".", "..") for segment in decoded.split("/")):
+        raise ValueError(f"Invalid request path (contains a dot-segment): {path!r}")
+
+
 def _parse_error(resp: httpx.Response) -> str:
     try:
         body = resp.json()
@@ -61,6 +78,7 @@ def _parse_error(resp: httpx.Response) -> str:
 
 
 async def api_get(path: str, params: dict[str, Any] | None = None) -> Any:
+    _reject_traversal(path)
     client = await get_client()
     clean = {k: v for k, v in (params or {}).items() if v is not None}
     resp = await client.get(path, params=clean)
@@ -70,6 +88,7 @@ async def api_get(path: str, params: dict[str, Any] | None = None) -> Any:
 
 
 async def api_post(path: str, body: Any = None, params: dict[str, Any] | None = None) -> Any:
+    _reject_traversal(path)
     client = await get_client()
     clean = {k: v for k, v in (params or {}).items() if v is not None}
     resp = await client.post(path, json=body, params=clean)
@@ -79,6 +98,7 @@ async def api_post(path: str, body: Any = None, params: dict[str, Any] | None = 
 
 
 async def api_put(path: str, body: Any = None) -> Any:
+    _reject_traversal(path)
     client = await get_client()
     resp = await client.put(path, json=body)
     if not resp.is_success:
@@ -87,6 +107,7 @@ async def api_put(path: str, body: Any = None) -> Any:
 
 
 async def api_delete(path: str, body: Any = None) -> Any:
+    _reject_traversal(path)
     client = await get_client()
     resp = await client.request("DELETE", path, json=body)
     if not resp.is_success:
