@@ -35,8 +35,11 @@ async def get_client() -> httpx.AsyncClient:
         _client = httpx.AsyncClient(
             base_url=f"{base_url}/rest",
             headers={"Authorization": f"Bearer {token}"},
-            verify=verify,
-            transport=httpx.AsyncHTTPTransport(retries=3),
+            # verify must be passed to the transport itself, not just the client —
+            # AsyncClient's own verify= is silently ignored whenever an explicit
+            # transport= is supplied, since the transport already has its own
+            # (default True) verify setting baked in by the time the client sees it.
+            transport=httpx.AsyncHTTPTransport(retries=3, verify=verify),
             timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
