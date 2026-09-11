@@ -44,14 +44,21 @@ def register(mcp: FastMCP) -> None:
         params: dict = {"page": page, "size": size}
         if filter:
             params["filter"] = filter
-        return await api_get("/inventory/v1/desktop-pools", params) or []
+        return await api_get("/inventory/v13/desktop-pools", params) or []
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_desktop_pool(
         pool_id: Annotated[str, "Desktop pool ID — obtain from list_desktop_pools"],
     ) -> dict:
-        """Get detailed configuration and status of a specific desktop pool."""
-        return await api_get(f"/inventory/v1/desktop-pools/{pool_id}")
+        """Get detailed configuration and status of a specific desktop pool.
+
+        Uses the v13 endpoint (not v1) specifically so this response contains every
+        field update_desktop_pool's schema can require — verified live, zero gap.
+        Earlier versions of this tool used v1, whose response is missing most of
+        those fields, making a real get-then-update round trip impossible without
+        guessing at values Horizon never returns.
+        """
+        return await api_get(f"/inventory/v13/desktop-pools/{pool_id}")
 
     @mcp.tool(annotations=ADDITIVE)
     async def create_desktop_pool(
@@ -107,8 +114,19 @@ def register(mcp: FastMCP) -> None:
         spec: Annotated[
             dict,
             "Updated pool specification. Retrieve the current config with get_desktop_pool, "
-            "modify the relevant fields, and pass the result here. Omit read-only fields "
-            "such as id, type, and source.",
+            "strip the read-only/immutable fields listed below, modify what you intend to "
+            "change, and pass the rest through unchanged — verified live against a real "
+            "server to require no guessing. "
+            "Fields to remove from get_desktop_pool's response before sending (present "
+            "there but rejected or meaningless here): id, name, type, source, naming_method, "
+            "vcenter_id, vcenter_name, farm_id, user_assignment, created_at, updated_at, "
+            "delete_in_progress, and the num_machines/num_sessions/num_application_sessions/"
+            "user_group_count/application_count counters. "
+            "Everything else from get_desktop_pool — including display_assigned_machine_name, "
+            "display_machine_alias, access_group_id, enable_provisioning, "
+            "stop_provisioning_on_error, transparent_page_sharing_scope, session_type, and "
+            "pattern_naming_settings, none of which earlier versions of get_desktop_pool "
+            "used to return — can be passed straight through.",
         ],
     ) -> dict:
         """Update an existing desktop pool's configuration."""
