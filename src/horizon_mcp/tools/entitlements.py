@@ -4,11 +4,12 @@ from typing import Annotated, Literal
 from fastmcp import FastMCP
 
 from ..client import api_delete, api_get, api_post, api_put
+from ._annotations import DESTRUCTIVE, READ_ONLY
 
 
 def register(mcp: FastMCP) -> None:
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_pool_entitlements(
         pool_type: Annotated[Literal["desktop", "application"], "Type of pool"],
     ) -> list:
@@ -19,7 +20,7 @@ def register(mcp: FastMCP) -> None:
         """
         return await api_get(f"/entitlements/v1/{pool_type}-pools") or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_pool_entitlement(
         pool_id: Annotated[str, "Pool ID to retrieve entitlements for"],
         pool_type: Annotated[Literal["desktop", "application"], "Type of pool"],
@@ -27,7 +28,7 @@ def register(mcp: FastMCP) -> None:
         """Get the users and groups entitled to access a specific pool."""
         return await api_get(f"/entitlements/v1/{pool_type}-pools/{pool_id}")
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     async def set_pool_entitlements(
         pool_id: Annotated[str, "Pool ID to modify entitlements for"],
         pool_type: Annotated[Literal["desktop", "application"], "Type of pool"],

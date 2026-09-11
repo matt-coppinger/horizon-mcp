@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from fastmcp import FastMCP
 
 from ..client import api_get, api_post
+from ._annotations import DESTRUCTIVE, READ_ONLY
 
 _DIAGNOSTIC_ASPECTS: dict[str, tuple[str, str]] = {
     "logon_timing": ("/helpdesk/v3/logon-timing/logon-segment", "dict"),
@@ -22,7 +23,7 @@ DiagnosticAspect = Literal[
 
 def register(mcp: FastMCP) -> None:
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def diagnose_session(
         session_id: Annotated[str, "Session ID to diagnose"],
         aspects: Annotated[
@@ -57,7 +58,7 @@ def register(mcp: FastMCP) -> None:
             for aspect, r in zip(selected, results)
         }
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_remote_assistance_ticket(
         session_id: Annotated[str, "Session ID"],
     ) -> dict:
@@ -71,7 +72,7 @@ def register(mcp: FastMCP) -> None:
             params={"internal_session_id": session_id},
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     async def end_remote_application(
         session_id: Annotated[str, "Session ID"],
         remote_application_id: Annotated[

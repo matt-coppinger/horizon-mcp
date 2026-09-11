@@ -1,6 +1,8 @@
 """Discovery tool: describes all available Horizon MCP tools and resources."""
 from fastmcp import FastMCP
 
+from ._annotations import READ_ONLY
+
 _COVERAGE: dict = {
     "tools": {
         "auth": [
@@ -185,7 +187,7 @@ _COVERAGE: dict = {
 
 def register(mcp: FastMCP) -> None:
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_api_coverage() -> dict:
         """List all available Horizon MCP tools, resources, and unsupported operations.
 

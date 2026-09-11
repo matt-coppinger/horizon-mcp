@@ -4,18 +4,19 @@ from typing import Annotated, Literal
 from fastmcp import FastMCP
 
 from ..client import api_get, api_post, api_put
+from ._annotations import ADDITIVE, IDEMPOTENT_UPDATE, READ_ONLY
 
 
 def register(mcp: FastMCP) -> None:
 
     # ── Connection Servers ─────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_connection_servers() -> list:
         """List all Horizon Connection Servers in the pod."""
         return await api_get("/config/v1/connection-servers") or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_connection_server(
         server_id: Annotated[str, "Connection server ID"],
     ) -> dict:
@@ -24,19 +25,19 @@ def register(mcp: FastMCP) -> None:
 
     # ── Virtual Centers ────────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_virtual_centers() -> list:
         """List all vCenter Servers configured in the Horizon environment."""
         return await api_get("/config/v6/virtual-centers") or []
 
     # ── Environment & Settings ─────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_environment_properties() -> dict:
         """Get environment-level properties including version, FIPS mode, and feature flags."""
         return await api_get("/config/v3/environment-properties")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_settings() -> dict:
         """Get the global Horizon configuration settings.
 
@@ -45,13 +46,13 @@ def register(mcp: FastMCP) -> None:
         """
         return await api_get("/config/v9/settings")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_global_policies() -> dict:
         """Get global VDI policies including USB redirection, multimedia redirection,
         clipboard settings, and other environment-wide policy settings."""
         return await api_get("/config/v1/global-policies")
 
-    @mcp.tool()
+    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
     async def update_global_policies(
         spec: Annotated[
             dict,
@@ -67,7 +68,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_put("/config/v1/global-policies", spec)
         return result or {"success": True}
 
-    @mcp.tool()
+    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
     async def update_settings(
         setting_type: Annotated[
             Literal["general", "security", "client", "feature", "agent-restriction"],
@@ -103,28 +104,28 @@ def register(mcp: FastMCP) -> None:
 
     # ── Licenses ───────────────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_licenses() -> list:
         """List all Horizon licenses and their status, mode, and expiry information."""
         return await api_get("/config/v1/licenses") or []
 
     # ── Event Database ─────────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_event_database() -> dict:
         """Get the configuration and connection status of the Horizon event database."""
         return await api_get("/config/v1/event-database")
 
     # ── Instant Clone Domain Accounts ─────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_ic_domain_accounts() -> list:
         """List instant clone domain accounts used for provisioning instant clone desktops."""
         return await api_get("/config/v1/ic-domain-accounts") or []
 
     # ── Image Management ───────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_image_management(
         resource: Annotated[
             Literal["streams", "versions", "tags"],
@@ -144,12 +145,12 @@ def register(mcp: FastMCP) -> None:
 
     # ── Gateways ───────────────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_gateways() -> list:
         """List all registered Unified Access Gateways."""
         return await api_get("/config/v1/gateways") or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=ADDITIVE)
     async def trigger_connection_server_backup(
         server_ids: Annotated[
             list[str] | None,

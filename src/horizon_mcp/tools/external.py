@@ -4,13 +4,14 @@ from typing import Annotated
 from fastmcp import FastMCP
 
 from ..client import api_get
+from ._annotations import READ_ONLY
 
 
 def register(mcp: FastMCP) -> None:
 
     # ── Active Directory ───────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def search_ad_users_or_groups(
         filter: Annotated[
             str,
@@ -36,14 +37,14 @@ def register(mcp: FastMCP) -> None:
             params["filter"] = filter
         return await api_get("/external/v4/ad-users-or-groups", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_ad_user_or_group(
         ad_id: Annotated[str, "AD user or group ID"],
     ) -> dict:
         """Get detailed information about a specific AD user or group."""
         return await api_get(f"/external/v4/ad-users-or-groups/{ad_id}")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_ad_domains() -> list:
         """List all Active Directory domains configured in the Horizon environment.
 
@@ -51,7 +52,7 @@ def register(mcp: FastMCP) -> None:
         """
         return await api_get("/external/v3/ad-domains") or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_ad_containers(
         domain_id: Annotated[str, "AD domain ID — obtain from list_ad_domains"],
     ) -> list:
@@ -64,14 +65,14 @@ def register(mcp: FastMCP) -> None:
         """
         return await api_get(f"/external/v1/ad-domains/{domain_id}/ad-containers") or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_domain_netbios_map() -> dict:
         """Get a mapping of domain NETBIOS names to DNS names for all configured domains."""
         return await api_get("/external/v1/domains") or {}
 
     # ── Audit Events ───────────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_audit_events(
         filter: Annotated[
             str,
@@ -91,7 +92,7 @@ def register(mcp: FastMCP) -> None:
 
     # ── vCenter Resources (for pool/farm provisioning reference) ───────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_base_vms(
         vcenter_id: Annotated[
             str, "vCenter ID to list VMs from. Use list_virtual_centers to get IDs."
@@ -106,7 +107,7 @@ def register(mcp: FastMCP) -> None:
             params["datacenter_id"] = datacenter_id
         return await api_get("/external/v2/base-vms", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_datastores(
         vcenter_id: Annotated[str, "vCenter ID. Use list_virtual_centers to get IDs."],
         host_or_cluster_id: Annotated[
@@ -117,7 +118,7 @@ def register(mcp: FastMCP) -> None:
         params = {"vcenter_id": vcenter_id, "host_or_cluster_id": host_or_cluster_id}
         return await api_get("/external/v1/datastores", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_vm_folders(
         vcenter_id: Annotated[str, "vCenter ID"],
         datacenter_id: Annotated[str, "Datacenter ID"],
@@ -126,7 +127,7 @@ def register(mcp: FastMCP) -> None:
         params = {"vcenter_id": vcenter_id, "datacenter_id": datacenter_id}
         return await api_get("/external/v1/vm-folders", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_datacenters(
         vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
     ) -> list:
@@ -137,7 +138,7 @@ def register(mcp: FastMCP) -> None:
         """
         return await api_get("/external/v1/datacenters", {"vcenter_id": vcenter_id}) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_hosts_or_clusters(
         vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
         datacenter_id: Annotated[str, "Datacenter ID — obtain from list_datacenters"],
@@ -150,7 +151,7 @@ def register(mcp: FastMCP) -> None:
         params = {"vcenter_id": vcenter_id, "datacenter_id": datacenter_id}
         return await api_get("/external/v1/hosts-or-clusters", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_resource_pools(
         vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
         host_or_cluster_id: Annotated[
@@ -165,7 +166,7 @@ def register(mcp: FastMCP) -> None:
         params = {"vcenter_id": vcenter_id, "host_or_cluster_id": host_or_cluster_id}
         return await api_get("/external/v1/resource-pools", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_base_vm_snapshots(
         vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
         base_vm_id: Annotated[str, "Base VM ID — obtain from list_base_vms"],
@@ -178,7 +179,7 @@ def register(mcp: FastMCP) -> None:
         params = {"vcenter_id": vcenter_id, "base_vm_id": base_vm_id}
         return await api_get("/external/v2/base-snapshots", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_network_labels(
         vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
         host_or_cluster_id: Annotated[
@@ -194,7 +195,7 @@ def register(mcp: FastMCP) -> None:
         params = {"vcenter_id": vcenter_id, "host_or_cluster_id": host_or_cluster_id}
         return await api_get("/external/v1/network-labels", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_network_interface_cards(
         vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
         base_vm_id: Annotated[str, "Base VM ID — obtain from list_base_vms (optional)"] = "",
@@ -219,7 +220,7 @@ def register(mcp: FastMCP) -> None:
             params["vm_template_id"] = vm_template_id
         return await api_get("/external/v1/network-interface-cards", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_vm_templates(
         vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
         datacenter_id: Annotated[str, "Datacenter ID — obtain from list_datacenters (optional)"] = "",
@@ -235,7 +236,7 @@ def register(mcp: FastMCP) -> None:
             params["datacenter_id"] = datacenter_id
         return await api_get("/external/v1/vm-templates", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_datastore_clusters(
         vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
         host_or_cluster_id: Annotated[
@@ -250,7 +251,7 @@ def register(mcp: FastMCP) -> None:
         params = {"vcenter_id": vcenter_id, "host_or_cluster_id": host_or_cluster_id}
         return await api_get("/external/v1/datastore-clusters", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_customization_specifications(
         vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
     ) -> list:
