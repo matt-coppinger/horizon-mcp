@@ -202,6 +202,36 @@ async def test_send_message_includes_all_fields(tools):
     assert captured["body"]["session_ids"] == ["s-1"]
 
 
+# ── list_desktop_pools / get_desktop_pool ───────────────────────────────────────
+# Must use v13, not v1 — v1's response is missing most fields update_desktop_pool
+# needs, making a real get-then-update round trip impossible (verified live).
+
+async def test_list_desktop_pools_uses_v13(tools):
+    captured: dict = {}
+
+    async def fake_get(path, params=None):
+        captured["path"] = path
+        return [{"id": "pool-1"}]
+
+    with patch("horizon_mcp.tools.inventory.api_get", side_effect=fake_get):
+        await tools["list_desktop_pools"]()
+
+    assert captured["path"] == "/inventory/v13/desktop-pools"
+
+
+async def test_get_desktop_pool_uses_v13(tools):
+    captured: dict = {}
+
+    async def fake_get(path, params=None):
+        captured["path"] = path
+        return {"id": "pool-abc"}
+
+    with patch("horizon_mcp.tools.inventory.api_get", side_effect=fake_get):
+        await tools["get_desktop_pool"](pool_id="pool-abc")
+
+    assert captured["path"] == "/inventory/v13/desktop-pools/pool-abc"
+
+
 # ── create_desktop_pool ────────────────────────────────────────────────────────
 
 async def test_create_desktop_pool_posts_spec_verbatim(tools):
