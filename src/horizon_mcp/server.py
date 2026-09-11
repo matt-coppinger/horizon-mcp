@@ -19,7 +19,8 @@ _auth = (
 mcp = FastMCP(
     name="Horizon",
     auth=_auth,
-    instructions="""MCP server for Omnissa Horizon VDI management (API version 2512).
+    instructions="""MCP server for Omnissa Horizon VDI management (verified against the
+Horizon Server REST API for versions 2512 through 2606).
 
 Required environment variables:
   HORIZON_BASE_URL         Horizon Connection Server URL, e.g. https://horizon.corp.example.com

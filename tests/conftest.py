@@ -12,10 +12,12 @@ class MockFastMCP:
 
     def __init__(self) -> None:
         self.tools: dict = {}
+        self.annotations: dict = {}
 
-    def tool(self):
+    def tool(self, *args, annotations=None, **kwargs):
         def decorator(fn):
             self.tools[fn.__name__] = fn
+            self.annotations[fn.__name__] = annotations
             return fn
         return decorator
 

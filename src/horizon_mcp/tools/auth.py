@@ -7,6 +7,7 @@ from fastmcp import FastMCP
 from pydantic import SecretStr
 
 from ..client import reset_client
+from ._annotations import ADDITIVE
 
 
 def _resolve_base_url(base_url: str) -> str:
@@ -34,7 +35,7 @@ def _resolve_base_url(base_url: str) -> str:
 
 
 def register(mcp: FastMCP) -> None:
-    @mcp.tool()
+    @mcp.tool(annotations=ADDITIVE)
     async def horizon_login(
         username: Annotated[str, "AD username (without domain prefix)"],
         password: Annotated[SecretStr, "AD password — masked in logs and server-side traces"],
@@ -90,7 +91,7 @@ def register(mcp: FastMCP) -> None:
             "refresh_token_hint": f"{refresh[:8]}…" if refresh else "",
         }
 
-    @mcp.tool()
+    @mcp.tool(annotations=ADDITIVE)
     async def horizon_refresh_token(
         refresh_token: Annotated[SecretStr, "Refresh token obtained from horizon_login"],
         base_url: Annotated[
@@ -130,7 +131,7 @@ def register(mcp: FastMCP) -> None:
             "access_token_hint": f"{token[:8]}…",
         }
 
-    @mcp.tool()
+    @mcp.tool(annotations=ADDITIVE)
     async def horizon_logout(
         refresh_token: Annotated[SecretStr, "Refresh token to invalidate"],
         base_url: Annotated[

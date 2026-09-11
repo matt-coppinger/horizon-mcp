@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from fastmcp import FastMCP
 
 from ..client import api_get
+from ._annotations import READ_ONLY
 
 _HEALTH_ENDPOINTS: dict[str, str] = {
     "summary": "/monitor/v1/health-metrics",
@@ -30,7 +31,7 @@ MetricScope = Literal["pools", "sessions", "machines", "system", "rds_servers", 
 
 def register(mcp: FastMCP) -> None:
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_infrastructure_health(
         components: Annotated[
             list[HealthComponent] | None,
@@ -67,14 +68,14 @@ def register(mcp: FastMCP) -> None:
             for c, r in zip(selected, results)
         }
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_connection_server_health(
         server_id: Annotated[str, "Connection server ID"],
     ) -> dict:
         """Get detailed health information for a specific Connection Server."""
         return await api_get(f"/monitor/v4/connection-servers/{server_id}")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_metrics(
         scope: Annotated[
             list[MetricScope] | None,

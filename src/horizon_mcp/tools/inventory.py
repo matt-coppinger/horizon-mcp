@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from fastmcp import FastMCP
 
 from ..client import api_delete, api_get, api_post, api_put
+from ._annotations import ADDITIVE, DESTRUCTIVE, IDEMPOTENT_UPDATE, READ_ONLY
 
 _MAX_MACHINE_COUNT = int(os.environ.get("HORIZON_MAX_MACHINE_COUNT", "500"))
 _MAX_BULK_DESTRUCTIVE = int(os.environ.get("HORIZON_MAX_BULK_DESTRUCTIVE", "20"))
@@ -29,7 +30,7 @@ def register(mcp: FastMCP) -> None:
 
     # ── Desktop Pools ──────────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_desktop_pools(
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
@@ -45,14 +46,14 @@ def register(mcp: FastMCP) -> None:
             params["filter"] = filter
         return await api_get("/inventory/v1/desktop-pools", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_desktop_pool(
         pool_id: Annotated[str, "Desktop pool ID — obtain from list_desktop_pools"],
     ) -> dict:
         """Get detailed configuration and status of a specific desktop pool."""
         return await api_get(f"/inventory/v1/desktop-pools/{pool_id}")
 
-    @mcp.tool()
+    @mcp.tool(annotations=ADDITIVE)
     async def create_desktop_pool(
         spec: Annotated[
             dict,
@@ -88,7 +89,7 @@ def register(mcp: FastMCP) -> None:
             )
         return result
 
-    @mcp.tool()
+    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
     async def update_desktop_pool(
         pool_id: Annotated[str, "Desktop pool ID — obtain from list_desktop_pools"],
         spec: Annotated[
@@ -102,7 +103,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_put(f"/inventory/v1/desktop-pools/{pool_id}", spec)
         return result or {"success": True, "pool_id": pool_id}
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     async def delete_desktop_pool(
         pool_id: Annotated[str, "Desktop pool ID — obtain from list_desktop_pools"],
         confirm: Annotated[
@@ -126,7 +127,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_delete(f"/inventory/v1/desktop-pools/{pool_id}")
         return result or {"success": True, "pool_id": pool_id}
 
-    @mcp.tool()
+    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
     async def desktop_pool_action(
         pool_ids: Annotated[list[str], "List of desktop pool IDs to act on"],
         action: Annotated[
@@ -148,7 +149,7 @@ def register(mcp: FastMCP) -> None:
 
     # ── Machines ───────────────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_machines(
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
@@ -173,14 +174,14 @@ def register(mcp: FastMCP) -> None:
             params["order_by"] = order_by
         return await api_get("/inventory/v1/machines", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_machine(
         machine_id: Annotated[str, "Machine ID — obtain from list_machines"],
     ) -> dict:
         """Get detailed information about a specific machine."""
         return await api_get(f"/inventory/v1/machines/{machine_id}")
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     async def machine_action(
         machine_ids: Annotated[list[str], "List of machine IDs to act on"],
         action: Annotated[
@@ -237,7 +238,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_post(path, body)
         return result or {"success": True, "action": action, "machine_count": len(machine_ids)}
 
-    @mcp.tool()
+    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
     async def assign_machine_users(
         machine_id: Annotated[str, "Machine ID — obtain from list_machines"],
         user_ids: Annotated[
@@ -264,7 +265,7 @@ def register(mcp: FastMCP) -> None:
 
     # ── RDS Farms ──────────────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_rdsh_farms(
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
@@ -276,14 +277,14 @@ def register(mcp: FastMCP) -> None:
             params["filter"] = filter
         return await api_get("/inventory/v1/farms", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_rdsh_farm(
         farm_id: Annotated[str, "Farm ID — obtain from list_rdsh_farms"],
     ) -> dict:
         """Get detailed information about a specific RDS farm."""
         return await api_get(f"/inventory/v1/farms/{farm_id}")
 
-    @mcp.tool()
+    @mcp.tool(annotations=ADDITIVE)
     async def create_rdsh_farm(
         spec: Annotated[
             dict,
@@ -318,7 +319,7 @@ def register(mcp: FastMCP) -> None:
             )
         return result
 
-    @mcp.tool()
+    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
     async def update_rdsh_farm(
         farm_id: Annotated[str, "Farm ID — obtain from list_rdsh_farms"],
         spec: Annotated[
@@ -332,7 +333,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_put(f"/inventory/v1/farms/{farm_id}", spec)
         return result or {"success": True, "farm_id": farm_id}
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     async def delete_rdsh_farm(
         farm_id: Annotated[str, "Farm ID — obtain from list_rdsh_farms"],
         confirm: Annotated[
@@ -356,7 +357,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_delete(f"/inventory/v1/farms/{farm_id}")
         return result or {"success": True, "farm_id": farm_id}
 
-    @mcp.tool()
+    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
     async def rdsh_farm_action(
         farm_ids: Annotated[list[str], "List of RDS farm IDs to act on"],
         action: Annotated[
@@ -395,7 +396,7 @@ def register(mcp: FastMCP) -> None:
 
     # ── Application Pools ──────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_application_pools(
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
@@ -407,14 +408,14 @@ def register(mcp: FastMCP) -> None:
             params["filter"] = filter
         return await api_get("/inventory/v1/application-pools", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_application_pool(
         pool_id: Annotated[str, "Application pool ID — obtain from list_application_pools"],
     ) -> dict:
         """Get detailed information about a specific application pool."""
         return await api_get(f"/inventory/v1/application-pools/{pool_id}")
 
-    @mcp.tool()
+    @mcp.tool(annotations=ADDITIVE)
     async def create_application_pool(
         name: Annotated[str, "Internal name (no spaces recommended)"],
         farm_id: Annotated[str, "RDS farm ID — obtain from list_rdsh_farms"],
@@ -452,7 +453,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_post("/inventory/v1/application-pools", body)
         return result or {"success": True}
 
-    @mcp.tool()
+    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
     async def update_application_pool(
         pool_id: Annotated[str, "Application pool ID — obtain from list_application_pools"],
         spec: Annotated[
@@ -465,7 +466,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_put(f"/inventory/v1/application-pools/{pool_id}", spec)
         return result or {"success": True, "pool_id": pool_id}
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     async def delete_application_pool(
         pool_id: Annotated[str, "Application pool ID — obtain from list_application_pools"],
         confirm: Annotated[
@@ -488,7 +489,7 @@ def register(mcp: FastMCP) -> None:
 
     # ── Sessions ───────────────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def list_sessions(
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
@@ -514,14 +515,14 @@ def register(mcp: FastMCP) -> None:
             params["order_by"] = order_by
         return await api_get("/inventory/v1/sessions", params) or []
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_session(
         session_id: Annotated[str, "Session ID — obtain from list_sessions"],
     ) -> dict:
         """Get detailed information about a specific user session."""
         return await api_get(f"/inventory/v1/sessions/{session_id}")
 
-    @mcp.tool()
+    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
     async def disconnect_sessions(
         session_ids: Annotated[
             list[str],
@@ -535,7 +536,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_post("/inventory/v1/sessions/action/disconnect", session_ids)
         return result or {"success": True, "session_count": len(session_ids)}
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     async def logoff_sessions(
         session_ids: Annotated[list[str], "List of session IDs to log off"],
         forced: Annotated[
@@ -557,7 +558,7 @@ def register(mcp: FastMCP) -> None:
         )
         return result or {"success": True, "session_count": len(session_ids)}
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     async def reset_or_restart_sessions(
         session_ids: Annotated[list[str], "List of session IDs to act on"],
         action: Annotated[
@@ -576,7 +577,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_post(f"/inventory/v1/sessions/action/{action}", session_ids)
         return result or {"success": True, "action": action, "session_count": len(session_ids)}
 
-    @mcp.tool()
+    @mcp.tool(annotations=ADDITIVE)
     async def send_message_to_sessions(
         session_ids: Annotated[list[str], "List of session IDs to message"],
         message: Annotated[str, "Message text to display to the user(s)"],
