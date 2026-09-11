@@ -239,10 +239,12 @@ async def test_create_desktop_pool_raises_on_none_response(tools):
 
 
 async def test_create_desktop_pool_raises_when_max_machine_count_exceeds_ceiling(tools):
+    # max_number_of_machines lives under the top-level pattern_naming_settings block,
+    # not provisioning_settings.max_machine_count (verified against a live Horizon server).
     spec = {
         "name": "HugePool", "type": "AUTOMATED", "source": "INSTANT_CLONE",
         "user_assignment": "FLOATING",
-        "provisioning_settings": {"max_machine_count": 9999},
+        "pattern_naming_settings": {"max_number_of_machines": 9999},
     }
     with pytest.raises(ValueError, match="exceeds the safety ceiling"):
         await tools["create_desktop_pool"](spec=spec)
@@ -252,7 +254,7 @@ async def test_create_desktop_pool_allows_max_machine_count_at_ceiling(tools):
     spec = {
         "name": "BigPool", "type": "AUTOMATED", "source": "INSTANT_CLONE",
         "user_assignment": "FLOATING",
-        "provisioning_settings": {"max_machine_count": 500},
+        "pattern_naming_settings": {"max_number_of_machines": 500},
     }
     with patch("horizon_mcp.tools.inventory.api_post", return_value={"id": "pool-ok"}):
         result = await tools["create_desktop_pool"](spec=spec)
@@ -341,9 +343,11 @@ async def test_create_rdsh_farm_raises_on_none_response(tools):
 
 
 async def test_create_rdsh_farm_raises_when_max_machine_count_exceeds_ceiling(tools):
+    # max_number_of_rds_servers lives under automated_farm_settings.pattern_naming_settings,
+    # not provisioning_settings.max_machine_count.
     spec = {
         "name": "HugeFarm", "type": "AUTOMATED", "source": "INSTANT_CLONE",
-        "provisioning_settings": {"max_machine_count": 9999},
+        "automated_farm_settings": {"pattern_naming_settings": {"max_number_of_rds_servers": 9999}},
     }
     with pytest.raises(ValueError, match="exceeds the safety ceiling"):
         await tools["create_rdsh_farm"](spec=spec)

@@ -57,16 +57,28 @@ def register(mcp: FastMCP) -> None:
     async def create_desktop_pool(
         spec: Annotated[
             dict,
-            "Full pool specification. Required keys: name, type (AUTOMATED | MANUAL), "
-            "source (INSTANT_CLONE | VIRTUAL_CENTER | RDS), "
-            "user_assignment (FLOATING | DEDICATED). "
-            "AUTOMATED pools also require provisioning_settings with: virtual_center_id, "
-            "parent_vm_id, snapshot_id, datacenter_id, vm_folder_id, host_or_cluster_id, "
-            "resource_pool_id, datastores ([{datastore_id}]), "
-            "nics ([{nic_id, network_label_id}]), naming_pattern, max_machine_count. "
-            "Use list_virtual_centers, list_base_vms, list_base_vm_snapshots, "
-            "list_datacenters, list_vm_folders, list_hosts_or_clusters, list_datastores, "
-            "list_resource_pools, and list_network_labels to look up all required IDs.",
+            "Full pool specification, verified against a live Horizon server (2606). "
+            "Required top-level keys: name, type (AUTOMATED | MANUAL | RDS), "
+            "source (INSTANT_CLONE | LINKED_CLONE | VIRTUAL_CENTER | RDS | UNMANAGED), "
+            "user_assignment (FLOATING | DEDICATED), naming_method (SPECIFIED | PATTERN), "
+            "access_group_id (required for AUTOMATED/MANUAL pools — get one from the "
+            "horizon://config/local-access-groups resource). "
+            "AUTOMATED pools ALSO require these — all top-level, NOT nested under "
+            "provisioning_settings, despite what that name suggests: "
+            "vcenter_id (from list_virtual_centers); "
+            "provisioning_settings: {parent_vm_id (list_base_vms), base_snapshot_id "
+            "(list_base_vm_snapshots), datacenter_id (list_datacenters), vm_folder_id "
+            "(list_vm_folders), host_or_cluster_id (list_hosts_or_clusters), resource_pool_id "
+            "(list_resource_pools)}; "
+            "storage_settings: {datastores: [{datastore_id}]} (list_datastores); "
+            "customization_settings: {customization_type: 'CLONE_PREP' for instant clone, "
+            "ad_container_rdn (list_ad_domains + list_ad_containers), "
+            "instant_clone_domain_account_id (list_ic_domain_accounts)}; "
+            "pattern_naming_settings: {naming_pattern, max_number_of_machines} when "
+            "naming_method='PATTERN'. "
+            "nics is optional and top-level (network_interface_card_id + "
+            "network_label_assignment_specs) — if omitted, new machines simply inherit the "
+            "parent image's existing network settings.",
         ],
     ) -> dict:
         """Create a new desktop pool.
@@ -74,7 +86,7 @@ def register(mcp: FastMCP) -> None:
         CAUTION: Provisioning an AUTOMATED pool immediately begins creating VMs in vCenter.
         Always confirm with the user before calling this.
         """
-        max_count = spec.get("provisioning_settings", {}).get("max_machine_count")
+        max_count = spec.get("pattern_naming_settings", {}).get("max_number_of_machines")
         if max_count is not None and max_count > _MAX_MACHINE_COUNT:
             raise ValueError(
                 f"max_machine_count {max_count} exceeds the safety ceiling of "
@@ -288,15 +300,23 @@ def register(mcp: FastMCP) -> None:
     async def create_rdsh_farm(
         spec: Annotated[
             dict,
-            "Full farm specification. Required keys: name, type (AUTOMATED | MANUAL), "
-            "source (INSTANT_CLONE | RDS). AUTOMATED farms also require provisioning_settings "
-            "with the same fields as create_desktop_pool (virtual_center_id, parent_vm_id, "
-            "snapshot_id, datacenter_id, vm_folder_id, host_or_cluster_id, resource_pool_id, "
-            "datastores, nics, naming_pattern, max_machine_count). "
-            "settings.desktop_id links the farm to its RDS desktop pool. "
-            "Use list_virtual_centers, list_base_vms, list_base_vm_snapshots, "
-            "list_datacenters, list_vm_folders, list_hosts_or_clusters, list_datastores, "
-            "list_resource_pools, and list_network_labels to look up all required IDs.",
+            "Full farm specification. NOTE: verified against the swagger schema only, not "
+            "yet live-tested (unlike create_desktop_pool) — if a field name here turns out "
+            "wrong, api_post's error message will name the exact field. "
+            "Required top-level keys: name, type (AUTOMATED | MANUAL), access_group_id "
+            "(from the horizon://config/local-access-groups resource). "
+            "AUTOMATED farms require an automated_farm_settings object — NOT the same shape "
+            "as create_desktop_pool's provisioning_settings, and nested one level deeper — "
+            "containing: vcenter_id (list_virtual_centers), max_session_type; "
+            "provisioning_settings: {parent_vm_id (list_base_vms), base_snapshot_id "
+            "(list_base_vm_snapshots), datacenter_id (list_datacenters), vm_folder_id "
+            "(list_vm_folders), host_or_cluster_id (list_hosts_or_clusters), resource_pool_id "
+            "(list_resource_pools)}; "
+            "storage_settings: {datastores: [{datastore_id}]} (list_datastores); "
+            "customization_settings: {instant_clone_domain_account_id (list_ic_domain_accounts), "
+            "ad_container_rdn (list_ad_domains + list_ad_containers)}; "
+            "pattern_naming_settings: {naming_pattern, max_number_of_rds_servers}. "
+            "settings.desktop_id links the farm to its RDS desktop pool.",
         ],
     ) -> dict:
         """Create a new RDS farm.
@@ -304,7 +324,9 @@ def register(mcp: FastMCP) -> None:
         CAUTION: Provisioning an AUTOMATED farm immediately begins creating VMs in vCenter.
         Always confirm with the user before calling this.
         """
-        max_count = spec.get("provisioning_settings", {}).get("max_machine_count")
+        max_count = spec.get("automated_farm_settings", {}).get(
+            "pattern_naming_settings", {}
+        ).get("max_number_of_rds_servers")
         if max_count is not None and max_count > _MAX_MACHINE_COUNT:
             raise ValueError(
                 f"max_machine_count {max_count} exceeds the safety ceiling of "

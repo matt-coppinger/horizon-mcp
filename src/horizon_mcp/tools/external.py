@@ -58,9 +58,10 @@ def register(mcp: FastMCP) -> None:
     ) -> list:
         """List AD containers (OUs) available in a domain for pool provisioning.
 
-        The rdn (relative distinguished name) from these results is used as the
-        ad_container_rdn in create_desktop_pool and create_rdsh_farm provisioning_settings
-        to control which OU newly provisioned computers are placed in.
+        The rdn (relative distinguished name) from these results is used as
+        ad_container_rdn in create_desktop_pool's customization_settings (or
+        create_rdsh_farm's automated_farm_settings.customization_settings) to control
+        which OU newly provisioned computers are placed in — NOT provisioning_settings.
         This is the OU picker equivalent of what the Horizon Console shows during pool creation.
         """
         return await api_get(f"/external/v1/ad-domains/{domain_id}/ad-containers") or []

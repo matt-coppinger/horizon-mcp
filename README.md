@@ -356,9 +356,11 @@ Most list tools accept a `filter` parameter using Horizon's JSON filter format:
 
 ## Creating Pools and Farms
 
-`create_desktop_pool` and `create_rdsh_farm` accept a `spec` dict that maps directly to the Horizon REST API request body. The required fields vary by pool type:
+`create_desktop_pool` and `create_rdsh_farm` accept a `spec` dict that maps directly to the Horizon REST API request body.
 
-**Automated Instant Clone desktop pool (minimum):**
+> **The nesting is not what the field names suggest.** `vcenter_id` is top-level, not inside `provisioning_settings`. Datastores live under a separate top-level `storage_settings` block. AD/domain-join settings live under a separate top-level `customization_settings` block. Naming and machine count live under a separate top-level `pattern_naming_settings` block, and the count field is `max_number_of_machines`, not `max_machine_count`. The example below is **verified against a live Horizon 2606 server** (a real pool was created with this exact shape) — an earlier version of this doc had the wrong nesting throughout and would have produced a 400 on every field.
+
+**Automated Instant Clone desktop pool (minimum working example):**
 ```json
 {
   "name": "MyPool",
@@ -366,28 +368,41 @@ Most list tools accept a `filter` parameter using Horizon's JSON filter format:
   "type": "AUTOMATED",
   "source": "INSTANT_CLONE",
   "user_assignment": "FLOATING",
+  "naming_method": "PATTERN",
+  "access_group_id": "<id from the horizon://config/local-access-groups resource>",
+  "vcenter_id": "<id from list_virtual_centers>",
   "provisioning_settings": {
-    "virtual_center_id": "<id from list_virtual_centers>",
     "parent_vm_id": "<id from list_base_vms>",
-    "snapshot_id": "<snapshot id>",
-    "datacenter_id": "<datacenter id>",
+    "base_snapshot_id": "<id from list_base_vm_snapshots>",
+    "datacenter_id": "<id from list_datacenters>",
     "vm_folder_id": "<id from list_vm_folders>",
-    "host_or_cluster_id": "<host/cluster id>",
-    "resource_pool_id": "<resource pool id>",
-    "datastores": [{"datastore_id": "<id from list_datastores>"}],
-    "nics": [{"nic_id": "<network id>", "network_label_id": "<network id>"}],
-    "naming_method": "PATTERN",
+    "host_or_cluster_id": "<id from list_hosts_or_clusters>",
+    "resource_pool_id": "<id from list_resource_pools>"
+  },
+  "storage_settings": {
+    "datastores": [{"datastore_id": "<id from list_datastores>"}]
+  },
+  "customization_settings": {
+    "customization_type": "CLONE_PREP",
+    "ad_container_rdn": "<rdn from list_ad_containers>",
+    "instant_clone_domain_account_id": "<id from list_ic_domain_accounts>"
+  },
+  "pattern_naming_settings": {
     "naming_pattern": "MyPool-{n:fixed=2}",
-    "max_machine_count": 10
+    "max_number_of_machines": 10
   }
 }
 ```
+
+`nics` is optional and top-level (`[{"network_interface_card_id": "...", "network_label_assignment_specs": [...]}]`) — if omitted, new machines simply inherit the parent image's existing network settings, which is fine for most cases.
+
+`create_rdsh_farm` requires `access_group_id` directly, and nests everything else **one level deeper**, under a top-level `automated_farm_settings` object: `automated_farm_settings.vcenter_id`, `.provisioning_settings`, `.storage_settings`, `.customization_settings`, `.pattern_naming_settings` (with `max_number_of_rds_servers` instead of `max_number_of_machines`), plus a required `max_session_type`. This farm shape is schema-verified but not yet live-tested — if a field name is still off, `api_post`'s error message will name exactly which one.
 
 **Resource ID lookup chain** — follow this sequence to resolve all IDs before calling `create_desktop_pool` or `create_rdsh_farm`:
 
 ```
 list_virtual_centers
-  ├─ list_customization_specifications(vcenter_id)   ← Sysprep/QuickPrep spec ID
+  ├─ list_customization_specifications(vcenter_id)   ← Sysprep spec ID (SYS_PREP only)
   ├─ list_vm_templates(vcenter_id)                   ← template_id (full/linked-clone pools)
   └─ list_datacenters(vcenter_id)
        ├─ list_vm_folders(vcenter_id, datacenter_id)
@@ -395,15 +410,19 @@ list_virtual_centers
             ├─ list_datastores(vcenter_id, host_or_cluster_id)
             ├─ list_datastore_clusters(vcenter_id, host_or_cluster_id)
             ├─ list_resource_pools(vcenter_id, host_or_cluster_id)
-            ├─ list_network_labels(vcenter_id, host_or_cluster_id)  ← network_label_id
-            └─ list_network_interface_cards(vcenter_id, ...)        ← nic_id
+            ├─ list_network_labels(vcenter_id, host_or_cluster_id)  ← optional, nics
+            └─ list_network_interface_cards(vcenter_id, ...)        ← optional, nics
 list_base_vms(vcenter_id)                            ← parent_vm_id (instant-clone pools)
-  └─ list_base_vm_snapshots(vcenter_id, base_vm_id)  ← snapshot_id
+  └─ list_base_vm_snapshots(vcenter_id, base_vm_id)  ← base_snapshot_id
+horizon://config/local-access-groups (resource)      ← access_group_id (always required)
+list_ad_domains
+  └─ list_ad_containers(domain_id)                   ← ad_container_rdn (instant clone)
+list_ic_domain_accounts                              ← instant_clone_domain_account_id (instant clone)
 ```
 
 `create_application_pool` uses explicit parameters instead — pass `name`, `farm_id`, `executable_path`, and optional fields directly.
 
-For updates, retrieve the current config with `get_desktop_pool` / `get_rdsh_farm` / `get_application_pool`, modify the relevant fields, and pass the result to the corresponding `update_*` tool.
+For updates, retrieve the current config with `get_desktop_pool` / `get_rdsh_farm` / `get_application_pool`, modify the relevant fields, and pass the result to the corresponding `update_*` tool. **Note:** `get_desktop_pool`'s response does not include several fields `update_desktop_pool`'s schema requires (e.g. `access_group_id`, `display_protocol_settings`) — this get-then-PUT round trip is not yet verified end-to-end; treat a 400 naming a missing field as expected until this is confirmed against a live server.
 
 **Delete operations** (`delete_desktop_pool`, `delete_rdsh_farm`, `delete_application_pool`) require `confirm=True` to proceed. Always call `get_desktop_pool` / `get_rdsh_farm` and `list_sessions` first to verify intent before passing `confirm=True`.
 
