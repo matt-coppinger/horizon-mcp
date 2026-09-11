@@ -169,6 +169,40 @@ async def test_get_client_returns_same_instance_on_repeated_calls():
     assert client1 is client2
 
 
+def _transport_verifies_certs(client: httpx.AsyncClient) -> bool:
+    """Introspect the actual SSL context an AsyncHTTPTransport was built with.
+
+    Passing verify= to AsyncClient alone doesn't work once an explicit transport=
+    is also supplied — the transport's own (default True) verify setting silently
+    wins. Checking client.verify (or the value passed in) would miss that bug
+    entirely; only the transport's real SSL context tells the truth.
+    """
+    import ssl
+    return client._transport._pool._ssl_context.verify_mode != ssl.CERT_NONE
+
+
+async def test_get_client_transport_actually_disables_verification_when_configured():
+    with patch.dict(os.environ, {
+        "HORIZON_BASE_URL": "https://horizon.test.example.com",
+        "HORIZON_ACCESS_TOKEN": "test-token",
+        "HORIZON_VERIFY_SSL": "false",
+    }):
+        client = await get_client()
+    assert not _transport_verifies_certs(client), (
+        "HORIZON_VERIFY_SSL=false did not disable verification on the actual transport"
+    )
+
+
+async def test_get_client_transport_verifies_certs_by_default():
+    with patch.dict(os.environ, {
+        "HORIZON_BASE_URL": "https://horizon.test.example.com",
+        "HORIZON_ACCESS_TOKEN": "test-token",
+    }, clear=False):
+        os.environ.pop("HORIZON_VERIFY_SSL", None)
+        client = await get_client()
+    assert _transport_verifies_certs(client)
+
+
 # ── reset_client ───────────────────────────────────────────────────────────────
 
 async def test_reset_client_idempotent():
