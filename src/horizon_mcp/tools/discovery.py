@@ -70,7 +70,7 @@ _COVERAGE: dict = {
             "search_ad_users_or_groups — find AD users and groups (use for entitlement IDs)",
             "get_ad_user_or_group — get AD entity details by ID",
             "list_ad_domains — list configured Active Directory domains",
-            "list_ad_containers — OU browser for a domain (rdn for pool provisioning_settings)",
+            "list_ad_containers — OU browser for a domain (rdn for pool customization_settings)",
             "get_domain_netbios_map — NETBIOS to DNS domain name mapping",
             "list_audit_events — administrative audit log (filterable)",
         ],
@@ -89,6 +89,12 @@ _COVERAGE: dict = {
             "list_base_vm_snapshots(vcenter_id, base_vm_id) — snapshots of a base VM",
             "list_customization_specifications(vcenter_id) — Sysprep/QuickPrep specs",
             "list_rdsh_farms — required to get farm_id for create_application_pool",
+            "horizon://config/local-access-groups resource — access_group_id, required for "
+            "AUTOMATED/MANUAL create_desktop_pool and required for create_rdsh_farm",
+            "list_ad_domains + list_ad_containers(domain_id) — ad_container_rdn for "
+            "create_desktop_pool/create_rdsh_farm customization_settings (instant clone)",
+            "list_ic_domain_accounts — instant_clone_domain_account_id for "
+            "create_desktop_pool/create_rdsh_farm customization_settings (instant clone)",
         ],
         "helpdesk": [
             "diagnose_session — all session diagnostics in one parallel call",
