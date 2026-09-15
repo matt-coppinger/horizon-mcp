@@ -174,8 +174,17 @@ def register(mcp: FastMCP) -> None:
     ) -> list:
         """List snapshots of a base VM that can be used as the image for an instant clone pool or farm.
 
-        The snapshot_id is required by create_desktop_pool and create_rdsh_farm
-        provisioning_settings when source is INSTANT_CLONE.
+        The result's id is used as base_snapshot_id in create_desktop_pool's or
+        create_rdsh_farm's provisioning_settings when source is INSTANT_CLONE.
+
+        CAUTION: don't just pick the first or most recent result. The chosen snapshot
+        must have been taken AFTER the Horizon Agent (with Instant Clone support) was
+        installed and configured on the VM — a snapshot from before that point will
+        provision machines that fail customization (observed live: Horizon reports
+        "AGENT_CUSTOMIZATION_FAULT ... IC Agent missing"). If multiple snapshots exist,
+        check their names/descriptions for one indicating the agent is installed (e.g.
+        containing "agent") rather than an earlier generic checkpoint (e.g. "clean").
+        When in doubt, ask the user which snapshot to use.
         """
         params = {"vcenter_id": vcenter_id, "base_vm_id": base_vm_id}
         return await api_get("/external/v2/base-snapshots", params) or []
