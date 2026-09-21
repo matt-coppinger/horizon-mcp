@@ -208,7 +208,7 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `create_rdsh_farm` | Create a new RDS farm (automated or manual) |
 | `update_rdsh_farm` | Update an existing RDS farm's configuration |
 | `delete_rdsh_farm` | Delete an RDS farm and all its servers ⚠️ — requires `confirm=True` |
-| `rdsh_farm_action` | Enable or disable one or more RDS farms — may fail on Horizon instances that strictly enforce the full farm update schema (see docstring) |
+| `rdsh_farm_action` | Enable or disable one or more RDS farms |
 | `list_application_pools` | List published application pools |
 | `get_application_pool` | Get application pool details |
 | `create_application_pool` | Publish a new application pool from an RDS farm |
@@ -396,7 +396,7 @@ Most list tools accept a `filter` parameter using Horizon's JSON filter format:
 
 `nics` is optional and top-level (`[{"network_interface_card_id": "...", "network_label_assignment_specs": [...]}]`) — if omitted, new machines simply inherit the parent image's existing network settings, which is fine for most cases.
 
-`create_rdsh_farm` requires `access_group_id` directly, and nests everything else **one level deeper**, under a top-level `automated_farm_settings` object: `automated_farm_settings.vcenter_id`, `.provisioning_settings`, `.storage_settings`, `.customization_settings`, `.pattern_naming_settings` (with `max_number_of_rds_servers` instead of `max_number_of_machines`), plus a required `max_session_type`. This farm shape is schema-verified but not yet live-tested — if a field name is still off, `api_post`'s error message will name exactly which one.
+`create_rdsh_farm` requires `access_group_id` directly, and nests everything else **one level deeper**, under a top-level `automated_farm_settings` object: `automated_farm_settings.vcenter_id`, `.provisioning_settings`, `.storage_settings`, `.customization_settings`, `.pattern_naming_settings` (with `max_number_of_rds_servers` instead of `max_number_of_machines`), plus a required `max_session_type` (`LIMITED` | `UNLIMITED` — `max_sessions` is required when `LIMITED`). This shape is verified live against a real Horizon 2606 server.
 
 **Resource ID lookup chain** — follow this sequence to resolve all IDs before calling `create_desktop_pool` or `create_rdsh_farm`:
 

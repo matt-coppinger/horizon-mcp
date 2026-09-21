@@ -25,6 +25,18 @@ _MACHINE_ACTIONS = {
 
 _FORCE_APPLICABLE_ACTIONS = {"shutdown", "restart"}
 
+# Every property FarmUpdateSpec accepts. Used to filter a full get_rdsh_farm (v10)
+# response down to only fields safe to PUT back — verified live that FarmUpdateSpec
+# requires several fields beyond "enabled" (access_group_id, display_name,
+# display_protocol_settings, server_error_threshold, session_settings,
+# use_custom_script_for_load_balancing), and that FarmInfoV10 contains all of them,
+# so this filter never has to guess at a value.
+_FARM_UPDATE_FIELDS = {
+    "access_group_id", "automated_farm_settings", "description", "display_name",
+    "display_protocol_settings", "enabled", "load_balancer_settings",
+    "server_error_threshold", "session_settings", "use_custom_script_for_load_balancing",
+}
+
 
 def register(mcp: FastMCP) -> None:
 
@@ -305,27 +317,31 @@ def register(mcp: FastMCP) -> None:
         params: dict = {"page": page, "size": size}
         if filter:
             params["filter"] = filter
-        return await api_get("/inventory/v1/farms", params) or []
+        return await api_get("/inventory/v10/farms", params) or []
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_rdsh_farm(
         farm_id: Annotated[str, "Farm ID — obtain from list_rdsh_farms"],
     ) -> dict:
-        """Get detailed information about a specific RDS farm."""
-        return await api_get(f"/inventory/v1/farms/{farm_id}")
+        """Get detailed information about a specific RDS farm.
+
+        Uses the v10 endpoint (not v1) so this response contains every field
+        update_rdsh_farm's schema can require — verified live, zero gap (mirrors
+        the same fix applied to get_desktop_pool).
+        """
+        return await api_get(f"/inventory/v10/farms/{farm_id}")
 
     @mcp.tool(annotations=ADDITIVE)
     async def create_rdsh_farm(
         spec: Annotated[
             dict,
-            "Full farm specification. NOTE: verified against the swagger schema only, not "
-            "yet live-tested (unlike create_desktop_pool) — if a field name here turns out "
-            "wrong, api_post's error message will name the exact field. "
+            "Full farm specification, verified live against a real Horizon server (2606). "
             "Required top-level keys: name, type (AUTOMATED | MANUAL), access_group_id "
             "(from the horizon://config/local-access-groups resource). "
             "AUTOMATED farms require an automated_farm_settings object — NOT the same shape "
             "as create_desktop_pool's provisioning_settings, and nested one level deeper — "
-            "containing: vcenter_id (list_virtual_centers), max_session_type; "
+            "containing: vcenter_id (list_virtual_centers), max_session_type (LIMITED | "
+            "UNLIMITED — max_sessions is required when LIMITED); "
             "provisioning_settings: {parent_vm_id (list_base_vms), base_snapshot_id "
             "(list_base_vm_snapshots), datacenter_id (list_datacenters), vm_folder_id "
             "(list_vm_folders), host_or_cluster_id (list_hosts_or_clusters), resource_pool_id "
@@ -411,20 +427,23 @@ def register(mcp: FastMCP) -> None:
         Disabling a farm prevents new sessions from being routed to it
         without terminating existing sessions — useful for draining a farm before maintenance.
 
-        Unlike desktop pools, farms have no bulk enable/disable endpoint — this sends one
-        PUT per farm with just {"enabled": ...} in the body and reports per-farm results
-        if any fail.
-
-        CAVEAT: the Horizon API's farm update schema formally requires several other fields
-        (access_group_id, display_name, display_protocol_settings, server_error_threshold,
-        session_settings, use_custom_script_for_load_balancing) that this tool does not send —
-        some of those aren't even retrievable from get_rdsh_farm, so a full spec can't always
-        be reconstructed. If a farm's Horizon instance enforces that requirement strictly,
-        this call will fail per-farm with a 400 error naming the missing field(s); the errors
-        field in the response will show which farms failed and why.
+        Unlike desktop pools, farms have no bulk enable/disable endpoint, and Horizon's farm
+        update schema requires several fields beyond "enabled" (verified live — a naive
+        partial-body PUT gets rejected). So this fetches each farm's full current state
+        first, changes only "enabled", and PUTs the complete spec back — a real get-then-
+        update round trip, not a guess. Reports per-farm results if any still fail.
         """
         enabled = action == "enable"
-        coros = [api_put(f"/inventory/v1/farms/{farm_id}", {"enabled": enabled}) for farm_id in farm_ids]
+
+        async def _set_enabled(farm_id: str) -> object:
+            current = await api_get(f"/inventory/v10/farms/{farm_id}")
+            if current is None:
+                raise ValueError(f"Farm {farm_id} not found")
+            spec = {k: v for k, v in current.items() if k in _FARM_UPDATE_FIELDS}
+            spec["enabled"] = enabled
+            return await api_put(f"/inventory/v1/farms/{farm_id}", spec)
+
+        coros = [_set_enabled(farm_id) for farm_id in farm_ids]
         results = await asyncio.gather(*coros, return_exceptions=True)
         errors = {farm_id: str(r) for farm_id, r in zip(farm_ids, results) if isinstance(r, Exception)}
         return {
