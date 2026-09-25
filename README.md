@@ -56,9 +56,12 @@ The server reads configuration from environment variables:
 | `HORIZON_ACCESS_TOKEN` | Yes* | Bearer token — obtain via `horizon_login` tool |
 | `HORIZON_VERIFY_SSL` | No | Set to `false` to skip TLS cert verification (lab use only) |
 | `MCP_TRANSPORT` | No | `stdio` (default), `streamable-http`, or `sse` |
-| `MCP_HOST` | No | Bind host for HTTP transport (default `0.0.0.0`) |
+| `MCP_HOST` | No | Bind host for HTTP transport (default `127.0.0.1`; the Docker image sets `0.0.0.0`) |
 | `MCP_PORT` | No | Port for HTTP transport (default `8000`) |
-| `MCP_API_KEY` | No | HTTP transport only — clients must send `Authorization: Bearer <value>` |
+| `MCP_API_KEY` | HTTP only | Required for HTTP transport — clients must send `Authorization: Bearer <value>`. The server refuses to start without it |
+| `MCP_ALLOW_UNAUTHENTICATED` | No | Set to `true` to run HTTP transport without `MCP_API_KEY` (not recommended) |
+| `MCP_ALLOWED_HOSTS` | No | Comma-separated host names the HTTP server answers to (Host header check). Defaults to loopback names when bound to loopback; unchecked otherwise |
+| `MCP_ALLOWED_ORIGINS` | No | Comma-separated browser origins allowed to call the HTTP server, e.g. `https://app.example.com`. Loopback origins are allowed when bound to loopback |
 
 *`HORIZON_ACCESS_TOKEN` can also be obtained at runtime by calling the `horizon_login` tool.
 
@@ -102,17 +105,7 @@ Add to your MCP client configuration:
 
 ### HTTP (remote / multi-user)
 
-```bash
-MCP_TRANSPORT=streamable-http \
-MCP_PORT=8000 \
-HORIZON_BASE_URL=https://horizon.corp.example.com \
-HORIZON_ACCESS_TOKEN=your-token \
-horizon-mcp
-```
-
-The server exposes a single endpoint at `http://host:8000/mcp`.
-
-Set `MCP_API_KEY` to require clients to authenticate with `Authorization: Bearer <MCP_API_KEY>`:
+HTTP transport requires `MCP_API_KEY` — clients authenticate with `Authorization: Bearer <MCP_API_KEY>`, and the server refuses to start without it (set `MCP_ALLOW_UNAUTHENTICATED=true` to override, not recommended). It binds to `127.0.0.1` by default; set `MCP_HOST=0.0.0.0` to accept connections from other machines.
 
 ```bash
 MCP_TRANSPORT=streamable-http \
@@ -122,6 +115,8 @@ HORIZON_BASE_URL=https://horizon.corp.example.com \
 HORIZON_ACCESS_TOKEN=your-token \
 horizon-mcp
 ```
+
+The server exposes a single endpoint at `http://host:8000/mcp`.
 
 Clients (Claude Desktop, Claude Code) pass the key in their MCP config:
 
@@ -139,6 +134,8 @@ Clients (Claude Desktop, Claude Code) pass the key in their MCP config:
 ```
 
 stdio transport always skips authentication regardless of `MCP_API_KEY`.
+
+The HTTP server also checks `Host` and `Origin` headers to block DNS-rebinding attacks from web pages. When bound to loopback it only answers to `localhost`/`127.0.0.1`/`::1`; behind a reverse proxy or on a named host, list your host names in `MCP_ALLOWED_HOSTS`. Browser-based clients from other origins must be listed in `MCP_ALLOWED_ORIGINS`; non-browser MCP clients send no `Origin` and are unaffected.
 
 > **HTTP transport security:** For any non-localhost deployment, place the server behind a reverse proxy (nginx, Caddy, Traefik) that enforces TLS. Each user should run a separate server instance with their own `HORIZON_ACCESS_TOKEN` and `MCP_API_KEY` to maintain session isolation.
 
@@ -161,7 +158,7 @@ Or with `docker-compose.yml` (reads `HORIZON_BASE_URL`, `HORIZON_ACCESS_TOKEN`, 
 HORIZON_BASE_URL=https://horizon.corp.example.com MCP_API_KEY=your-secret-key docker compose up -d
 ```
 
-`MCP_API_KEY` is required by `docker-compose.yml` on purpose — a containerized deployment is reachable over the network by definition, so leaving the endpoint unauthenticated is not a safe default (see [Security Notes](#security-notes)). Point your MCP client at `http://host:8000/mcp` with the matching `Authorization: Bearer` header as shown above.
+`MCP_API_KEY` is required — both `docker-compose.yml` and the server itself refuse to start without it, because a containerized deployment is reachable over the network by definition, so leaving the endpoint unauthenticated is not a safe default (see [Security Notes](#security-notes)). Point your MCP client at `http://host:8000/mcp` with the matching `Authorization: Bearer` header as shown above.
 
 ## Getting an Access Token
 

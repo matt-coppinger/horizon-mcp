@@ -9,6 +9,8 @@ from .tools import auth, config, discovery, entitlements, external, helpdesk, in
 
 # When MCP_API_KEY is set, HTTP transport requires clients to send
 # Authorization: Bearer <MCP_API_KEY>. Stdio transport always skips auth.
+# __main__ refuses to start HTTP transport without a key unless
+# MCP_ALLOW_UNAUTHENTICATED=true.
 _api_key = os.environ.get("MCP_API_KEY")
 _auth = (
     StaticTokenVerifier(tokens={_api_key: {"client_id": "mcp-client", "scopes": ["mcp"]}})
@@ -27,8 +29,8 @@ Required environment variables:
   HORIZON_ACCESS_TOKEN     Bearer token — obtain via horizon_login, then set here
   HORIZON_VERIFY_SSL       Set to 'false' to skip TLS verification (lab use only)
   MCP_TRANSPORT            Transport: 'stdio' (default) | 'streamable-http' | 'sse'
-  MCP_HOST / MCP_PORT      Host/port when using HTTP transport (default 0.0.0.0:8000)
-  MCP_API_KEY              (HTTP transport only) Bearer token clients must send to authenticate
+  MCP_HOST / MCP_PORT      Host/port when using HTTP transport (default 127.0.0.1:8000)
+  MCP_API_KEY              (HTTP transport, required) Bearer token clients must send to authenticate
 
 Workflow:
 1. Call horizon_login with AD credentials to receive access_token + refresh_token.

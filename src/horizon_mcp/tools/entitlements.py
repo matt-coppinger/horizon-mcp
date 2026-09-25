@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 
-from ..client import api_delete, api_get, api_post, api_put
+from ..client import api_delete, api_get, api_post, api_put, seg
 from ._annotations import DESTRUCTIVE, READ_ONLY
 
 
@@ -26,7 +26,7 @@ def register(mcp: FastMCP) -> None:
         pool_type: Annotated[Literal["desktop", "application"], "Type of pool"],
     ) -> dict:
         """Get the users and groups entitled to access a specific pool."""
-        return await api_get(f"/entitlements/v1/{pool_type}-pools/{pool_id}")
+        return await api_get(f"/entitlements/v1/{pool_type}-pools/{seg(pool_id)}")
 
     @mcp.tool(annotations=DESTRUCTIVE)
     async def set_pool_entitlements(

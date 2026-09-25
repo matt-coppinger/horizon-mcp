@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 
-from ..client import api_get
+from ..client import api_get, seg
 from ._annotations import READ_ONLY
 
 _HEALTH_ENDPOINTS: dict[str, str] = {
@@ -73,7 +73,7 @@ def register(mcp: FastMCP) -> None:
         server_id: Annotated[str, "Connection server ID"],
     ) -> dict:
         """Get detailed health information for a specific Connection Server."""
-        return await api_get(f"/monitor/v4/connection-servers/{server_id}")
+        return await api_get(f"/monitor/v4/connection-servers/{seg(server_id)}")
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_metrics(

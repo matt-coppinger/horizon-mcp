@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastmcp import FastMCP
 
-from ..client import api_get
+from ..client import api_get, seg
 from ._annotations import READ_ONLY
 
 
@@ -42,7 +42,7 @@ def register(mcp: FastMCP) -> None:
         ad_id: Annotated[str, "AD user or group ID"],
     ) -> dict:
         """Get detailed information about a specific AD user or group."""
-        return await api_get(f"/external/v4/ad-users-or-groups/{ad_id}")
+        return await api_get(f"/external/v4/ad-users-or-groups/{seg(ad_id)}")
 
     @mcp.tool(annotations=READ_ONLY)
     async def list_ad_domains() -> list:
@@ -64,7 +64,7 @@ def register(mcp: FastMCP) -> None:
         which OU newly provisioned computers are placed in — NOT provisioning_settings.
         This is the OU picker equivalent of what the Horizon Console shows during pool creation.
         """
-        return await api_get(f"/external/v1/ad-domains/{domain_id}/ad-containers") or []
+        return await api_get(f"/external/v1/ad-domains/{seg(domain_id)}/ad-containers") or []
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_domain_netbios_map() -> dict:
