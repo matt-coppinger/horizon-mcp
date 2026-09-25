@@ -240,7 +240,7 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `list_licenses` | License list and status |
 | `get_event_database` | Event DB config |
 | `list_ic_domain_accounts` | Instant clone domain accounts |
-| `list_image_management` | Image management streams, versions, or tags (pass `resource`: `streams`\|`versions`\|`tags`) |
+| `list_image_management` | Image management streams, versions, or tags (pass `resource`: `streams`\|`versions`\|`tags`; versions and tags also need `stream_id` from `streams`) |
 | `list_gateways` | Registered UAGs |
 | `trigger_connection_server_backup` | Trigger Connection Server backup |
 
@@ -267,7 +267,7 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `list_hosts_or_clusters` | Hosts and clusters in a datacenter |
 | `list_resource_pools` | Resource pools on a host or cluster |
 | `list_network_labels` | Network port groups on a host or cluster |
-| `list_network_interface_cards` | NICs on a host or cluster (nic_id for pool NIC config) |
+| `list_network_interface_cards` | NICs on a base VM or VM template (requires `base_vm_id` or `vm_template_id`; id → `network_interface_card_id` in `nics`) |
 | `list_vm_templates` | VM templates for full/linked-clone pools |
 | `list_datastore_clusters` | Storage DRS datastore clusters (requires vcenter_id + host_or_cluster_id) |
 | `list_customization_specifications` | Sysprep/QuickPrep specs for OS customization during provisioning |
@@ -404,16 +404,17 @@ Most list tools accept a `filter` parameter using Horizon's JSON filter format:
 list_virtual_centers
   ├─ list_customization_specifications(vcenter_id)   ← Sysprep spec ID (SYS_PREP only)
   ├─ list_vm_templates(vcenter_id)                   ← template_id (full/linked-clone pools)
+  │    └─ list_network_interface_cards(vcenter_id, vm_template_id=...)  ← optional, nics
   └─ list_datacenters(vcenter_id)
        ├─ list_vm_folders(vcenter_id, datacenter_id)
        └─ list_hosts_or_clusters(vcenter_id, datacenter_id)
             ├─ list_datastores(vcenter_id, host_or_cluster_id)
             ├─ list_datastore_clusters(vcenter_id, host_or_cluster_id)
             ├─ list_resource_pools(vcenter_id, host_or_cluster_id)
-            ├─ list_network_labels(vcenter_id, host_or_cluster_id)  ← optional, nics
-            └─ list_network_interface_cards(vcenter_id, ...)        ← optional, nics
+            └─ list_network_labels(vcenter_id, host_or_cluster_id)  ← optional, nics
 list_base_vms(vcenter_id)                            ← parent_vm_id (instant-clone pools)
-  └─ list_base_vm_snapshots(vcenter_id, base_vm_id)  ← base_snapshot_id
+  ├─ list_base_vm_snapshots(vcenter_id, base_vm_id)  ← base_snapshot_id
+  └─ list_network_interface_cards(vcenter_id, base_vm_id)  ← optional, nics
 horizon://config/local-access-groups (resource)      ← access_group_id (always required)
 list_ad_domains
   └─ list_ad_containers(domain_id)                   ← ad_container_rdn (instant clone)
