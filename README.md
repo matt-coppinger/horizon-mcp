@@ -12,25 +12,17 @@ The fastest path to a working setup, using Claude Code with stdio transport:
    cd horizon-mcp
    uv sync
    ```
-2. **Register the server** — add this to `~/.claude/settings.json` (see [Configuration](#configuration) below for what each variable means):
-   ```json
-   {
-     "mcpServers": {
-       "horizon": {
-         "command": "uv",
-         "args": ["run", "--project", "/absolute/path/to/horizon-mcp", "horizon-mcp"],
-         "env": {
-           "HORIZON_BASE_URL": "https://horizon.corp.example.com"
-         }
-       }
-     }
-   }
+2. **Register the server** with Claude Code (see [Configuration](#configuration) below for what each variable means):
+   ```bash
+   claude mcp add horizon \
+     -e HORIZON_BASE_URL=https://horizon.corp.example.com \
+     -- uv run --project /absolute/path/to/horizon-mcp horizon-mcp
    ```
    Use the absolute path to where you cloned the repo. Omit `HORIZON_ACCESS_TOKEN` for now — you'll get one in the next step.
 3. **Restart Claude Code**, then get a token by asking it to call `horizon_login` (see [Getting an Access Token](#getting-an-access-token)) with your AD credentials.
-4. **Verify it works** — ask Claude Code to call `list_desktop_pools` or `get_infrastructure_health`. If you get real data back, you're set. Copy the `access_token` from step 3 into `HORIZON_ACCESS_TOKEN` in your config so you don't have to log in again on restart.
+4. **Verify it works** — ask Claude Code to call `list_desktop_pools` or `get_infrastructure_health`. If you get real data back, you're set. To avoid logging in again after a restart, re-register with the `access_token` from step 3: `claude mcp remove horizon`, then repeat step 2 with `-e HORIZON_ACCESS_TOKEN=<token>` added.
 
-Running the server standalone over HTTP instead (for remote/multi-user access, or in Docker)? See [HTTP (remote / multi-user)](#http-remote--multi-user) and [Docker](#docker).
+Running the server standalone over HTTP instead (for remote/multi-user access, or in Docker)? See [HTTP (remote)](#http-remote) and [Docker](#docker).
 
 ## Requirements
 
@@ -55,6 +47,9 @@ The server reads configuration from environment variables:
 | `HORIZON_BASE_URL` | Yes | Connection Server URL, e.g. `https://horizon.corp.example.com` |
 | `HORIZON_ACCESS_TOKEN` | Yes* | Bearer token — obtain via `horizon_login` tool |
 | `HORIZON_VERIFY_SSL` | No | Set to `false` to skip TLS cert verification (lab use only) |
+| `HORIZON_CONFIRMATION` | No | `elicit` (default): destructive tools ask the user to confirm in the MCP client, and are refused if the client can't show the prompt. `flag`: fall back to a `confirm=True` argument for clients without elicitation. See [Confirming destructive operations](#confirming-destructive-operations) |
+| `HORIZON_MAX_BULK_DESTRUCTIVE` | No | Most machines `machine_action` will rebuild, reset or archive in one call (default `20`) |
+| `HORIZON_MAX_MACHINE_COUNT` | No | Largest machine / RDS server count `create_desktop_pool` / `create_rdsh_farm` will accept (default `500`) |
 | `MCP_TRANSPORT` | No | `stdio` (default), `streamable-http`, or `sse` |
 | `MCP_HOST` | No | Bind host for HTTP transport (default `127.0.0.1`; the Docker image sets `0.0.0.0`) |
 | `MCP_PORT` | No | Port for HTTP transport (default `8000`) |
@@ -87,23 +82,15 @@ Add to your MCP client configuration:
 }
 ```
 
-**Claude Code** (`~/.claude/settings.json`):
-```json
-{
-  "mcpServers": {
-    "horizon": {
-      "command": "uv",
-      "args": ["run", "--project", "/path/to/HorizonMCP", "horizon-mcp"],
-      "env": {
-        "HORIZON_BASE_URL": "https://horizon.corp.example.com",
-        "HORIZON_ACCESS_TOKEN": "your-access-token-here"
-      }
-    }
-  }
-}
+**Claude Code** — register it with `claude mcp add` (add `--scope project` to write a shareable `.mcp.json` instead):
+```bash
+claude mcp add horizon \
+  -e HORIZON_BASE_URL=https://horizon.corp.example.com \
+  -e HORIZON_ACCESS_TOKEN=your-access-token-here \
+  -- uv run --project /path/to/HorizonMCP horizon-mcp
 ```
 
-### HTTP (remote / multi-user)
+### HTTP (remote)
 
 HTTP transport requires `MCP_API_KEY` — clients authenticate with `Authorization: Bearer <MCP_API_KEY>`, and the server refuses to start without it (set `MCP_ALLOW_UNAUTHENTICATED=true` to override, not recommended). It binds to `127.0.0.1` by default; set `MCP_HOST=0.0.0.0` to accept connections from other machines.
 
@@ -118,19 +105,11 @@ horizon-mcp
 
 The server exposes a single endpoint at `http://host:8000/mcp`.
 
-Clients (Claude Desktop, Claude Code) pass the key in their MCP config:
+Clients pass the key as a header. For Claude Code:
 
-```json
-{
-  "mcpServers": {
-    "horizon": {
-      "url": "http://your-server:8000/mcp",
-      "headers": {
-        "Authorization": "Bearer your-secret-key"
-      }
-    }
-  }
-}
+```bash
+claude mcp add --transport http horizon http://your-server:8000/mcp \
+  --header "Authorization: Bearer your-secret-key"
 ```
 
 stdio transport always skips authentication regardless of `MCP_API_KEY`.
@@ -180,6 +159,8 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 
 ## Available Tools
 
+⚠️ = asks you to confirm before running — see [Confirming destructive operations](#confirming-destructive-operations).
+
 ### Auth
 | Tool | Description |
 |---|---|
@@ -194,28 +175,28 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `get_desktop_pool` | Get pool details |
 | `create_desktop_pool` | Create a new desktop pool (VDI or RDS, automated or manual) |
 | `update_desktop_pool` | Update an existing desktop pool's configuration |
-| `delete_desktop_pool` | Delete a desktop pool and all its machines ⚠️ — requires `confirm=True` |
-| `desktop_pool_action` | Enable/disable a pool, or enable/disable-provisioning |
+| `delete_desktop_pool` | Delete a desktop pool and all its machines ⚠️ |
+| `desktop_pool_action` | Enable/disable a pool, or enable/disable-provisioning (⚠️ when disabling) |
 | `list_machines` | List virtual desktops (filterable by pool, state) |
 | `get_machine` | Get machine details |
-| `machine_action` | Shutdown, restart, reset, rebuild, recover, maintenance |
+| `machine_action` | Shutdown, restart, reset, rebuild, archive ⚠️; recover, enter/exit maintenance |
 | `assign_machine_users` | Assign or unassign users to a dedicated (non-floating) desktop |
 | `list_rdsh_farms` | List RDS farms |
 | `get_rdsh_farm` | Get farm details |
 | `create_rdsh_farm` | Create a new RDS farm (automated or manual) |
 | `update_rdsh_farm` | Update an existing RDS farm's configuration |
-| `delete_rdsh_farm` | Delete an RDS farm and all its servers ⚠️ — requires `confirm=True` |
-| `rdsh_farm_action` | Enable or disable one or more RDS farms |
+| `delete_rdsh_farm` | Delete an RDS farm and all its servers ⚠️ |
+| `rdsh_farm_action` | Enable or disable one or more RDS farms (⚠️ when disabling) |
 | `list_application_pools` | List published application pools |
 | `get_application_pool` | Get application pool details |
 | `create_application_pool` | Publish a new application pool from an RDS farm |
 | `update_application_pool` | Update an existing application pool's configuration |
-| `delete_application_pool` | Unpublish an application pool ⚠️ — requires `confirm=True` |
+| `delete_application_pool` | Unpublish an application pool ⚠️ |
 | `list_sessions` | List active user sessions |
 | `get_session` | Get session details |
-| `disconnect_sessions` | Disconnect sessions (keep running) |
-| `logoff_sessions` | Log off sessions (terminates apps) |
-| `reset_or_restart_sessions` | Hard-reset or gracefully restart the VMs backing sessions |
+| `disconnect_sessions` | Disconnect sessions (keep running) ⚠️ |
+| `logoff_sessions` | Log off sessions (terminates apps) ⚠️ |
+| `reset_or_restart_sessions` | Hard-reset or gracefully restart the VMs backing sessions ⚠️ |
 | `send_message_to_sessions` | Send pop-up notification to sessions |
 
 ### Monitor
@@ -233,7 +214,9 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `list_virtual_centers` | List configured vCenters |
 | `get_environment_properties` | Environment version and features |
 | `get_settings` | Global Horizon settings |
+| `update_settings` | Change a settings section: general, security, client, feature or agent-restriction ⚠️ |
 | `get_global_policies` | USB, clipboard, multimedia policies |
+| `update_global_policies` | Change global policies ⚠️ (the prompt lists each field being changed) |
 | `list_licenses` | License list and status |
 | `get_event_database` | Event DB config |
 | `list_ic_domain_accounts` | Instant clone domain accounts |
@@ -246,7 +229,7 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 |---|---|
 | `list_pool_entitlements` | All entitlements for desktop or application pools |
 | `get_pool_entitlement` | Users/groups for a specific pool |
-| `set_pool_entitlements` | Add, replace, or remove entitlements (desktop or application) — `replace` is desktop-pool only, the Horizon API has no bulk-replace endpoint for application pools |
+| `set_pool_entitlements` | Add, replace ⚠️, or remove ⚠️ entitlements (desktop or application) — `replace` is desktop-pool only, the Horizon API has no bulk-replace endpoint for application pools |
 
 ### External / Active Directory
 | Tool | Description |
@@ -254,6 +237,7 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 | `search_ad_users_or_groups` | Find AD users and groups |
 | `get_ad_user_or_group` | Get AD entity details |
 | `list_ad_domains` | List configured AD domains |
+| `list_ad_containers` | AD containers (OUs) in a domain — `rdn` → `ad_container_rdn` for provisioning |
 | `get_domain_netbios_map` | NETBIOS → DNS domain name map |
 | `list_audit_events` | Administrative audit log |
 | `list_base_vms` | VMs available for pool base images |
@@ -308,6 +292,13 @@ MCP Resources expose read-only Horizon data without consuming tool slots. Access
 | `horizon://config/pre-logon-settings` | Pre-logon banner/message settings |
 | `horizon://config/log-collector/log-levels` | Component log levels |
 | `horizon://config/log-collector/tasks` | Log collection tasks |
+| `horizon://config/gateway-access-users-or-groups` | Users and groups with gateway access |
+| `horizon://config/unauthenticated-access-users` | Users configured for unauthenticated (kiosk) access |
+| `horizon://config/users-or-groups-global-summary` | Global summary of admin users and groups across pods |
+| `horizon://config/external-deployments` | External deployments (e.g. Horizon Cloud links) registered with this pod |
+| `horizon://config/secondary-credentials` | Secondary credentials configured for connection servers |
+| `horizon://config/message-clients` | Message security mode clients registered with Horizon |
+| `horizon://config/rcx-servers` | RCX (Remote Console) servers registered with Horizon |
 
 **Monitor resources** (`horizon://monitor/...`):
 
@@ -328,7 +319,7 @@ MCP Resources expose read-only Horizon data without consuming tool slots. Access
 |---|---|
 | `diagnose_session` | All session diagnostics in one parallel call: logon timing, display performance, historical performance, processes, remote applications |
 | `get_remote_assistance_ticket` | MSRA ticket for remote support |
-| `end_remote_application` | Force-close a published app in a session |
+| `end_remote_application` | Force-close a published app in a session ⚠️ |
 
 ## Horizon Filter Syntax
 
@@ -420,9 +411,27 @@ list_ic_domain_accounts                              ← instant_clone_domain_ac
 
 `create_application_pool` uses explicit parameters instead — pass `name`, `farm_id`, `executable_path`, and optional fields directly.
 
-For updates, retrieve the current config with `get_desktop_pool` / `get_rdsh_farm` / `get_application_pool`, modify the relevant fields, and pass the result to the corresponding `update_*` tool. **Note:** `get_desktop_pool`'s response does not include several fields `update_desktop_pool`'s schema requires (e.g. `access_group_id`, `display_protocol_settings`) — this get-then-PUT round trip is not yet verified end-to-end; treat a 400 naming a missing field as expected until this is confirmed against a live server.
+For updates, retrieve the current config with `get_desktop_pool` / `get_rdsh_farm` / `get_application_pool`, modify the relevant fields, and pass the result to the corresponding `update_*` tool. `get_desktop_pool` and `get_rdsh_farm` return every field their `update_*` schema needs, and the unchanged get-then-update round trip is verified live against Horizon 2606 for both pools and farms.
 
-**Delete operations** (`delete_desktop_pool`, `delete_rdsh_farm`, `delete_application_pool`) require `confirm=True` to proceed. Always call `get_desktop_pool` / `get_rdsh_farm` and `list_sessions` first to verify intent before passing `confirm=True`.
+**Delete operations** (`delete_desktop_pool`, `delete_rdsh_farm`, `delete_application_pool`) ask you to confirm in the client, naming the pool or farm. Call `get_desktop_pool` / `get_rdsh_farm` and `list_sessions` first so you know what will be affected.
+
+## Confirming destructive operations
+
+Tools marked ⚠️ pause and ask **you** to confirm before they run, using MCP [elicitation](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation): your MCP client shows a prompt describing exactly what will happen (for example *"Delete desktop pool Sales (id), all of its machines, and end any active sessions in it"*) with **Proceed** and **Cancel**. The AI model can't answer this prompt for you, so a prompt-injected or mistaken model can't push a destructive operation through on its own — unlike a `confirm=True` argument, which the model sets itself.
+
+| Tool | Asks when |
+|---|---|
+| `delete_desktop_pool`, `delete_rdsh_farm`, `delete_application_pool` | Always |
+| `machine_action` | `shutdown`, `restart`, `reset`, `rebuild`, `archive` (not `recover` or maintenance mode) |
+| `logoff_sessions`, `disconnect_sessions`, `reset_or_restart_sessions` | Always |
+| `end_remote_application` | Always |
+| `desktop_pool_action`, `rdsh_farm_action` | Disabling (not enabling) |
+| `set_pool_entitlements` | `replace` or `remove` (not `add`) |
+| `update_global_policies`, `update_settings` | Always — the prompt lists each field that changes, old → new |
+
+If your client doesn't support elicitation, these tools are **refused** by default. If you can't switch clients, set `HORIZON_CONFIRMATION=flag` on the server to accept a `confirm=True` argument instead — be aware the model can set that argument itself, so only do this with a client that asks you to approve each tool call.
+
+These tools, plus the `update_*` tools and `assign_machine_users`, also carry `destructiveHint=True`, so clients that gate tool calls on MCP annotations will prompt before running them.
 
 ## Running Tests
 
@@ -436,5 +445,7 @@ uv run pytest tests/ -v
 - In production, always keep `HORIZON_VERIFY_SSL=true` (default).
 - Passwords passed to `horizon_login` are typed as `SecretStr` and masked in server-side logs.
 - Access and refresh tokens are returned in the login response so you can copy them to your config — treat them as passwords and clear them from the conversation after use.
-- For multi-user HTTP deployments, run separate server instances per user and protect the endpoint with a reverse proxy that enforces authentication.
-- Destructive operations (logoff, rebuild, machine actions) require explicit user confirmation — always verify intent before executing.
+- The server holds one Horizon session (the token from `HORIZON_ACCESS_TOKEN` or the last `horizon_login`) shared by every client connected to it. For multiple users, run a separate instance per user with its own `HORIZON_ACCESS_TOKEN` and `MCP_API_KEY`, behind a reverse proxy that enforces TLS.
+- Destructive operations ask the user to confirm in the MCP client and are refused if the client can't prompt — see [Confirming destructive operations](#confirming-destructive-operations).
+- HTTP transport requires `MCP_API_KEY`, binds to `127.0.0.1` by default, and validates `Host`/`Origin` headers against DNS rebinding.
+- IDs passed to tools are percent-encoded before being placed in Horizon API paths, so an ID can't redirect a request to a different endpoint.

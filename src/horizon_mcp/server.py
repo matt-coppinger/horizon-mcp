@@ -31,6 +31,8 @@ Required environment variables:
   MCP_TRANSPORT            Transport: 'stdio' (default) | 'streamable-http' | 'sse'
   MCP_HOST / MCP_PORT      Host/port when using HTTP transport (default 127.0.0.1:8000)
   MCP_API_KEY              (HTTP transport, required) Bearer token clients must send to authenticate
+  HORIZON_CONFIRMATION     'elicit' (default): refuse destructive ops if the client can't prompt the user;
+                           'flag': accept confirm=True instead
 
 Workflow:
 1. Call horizon_login with AD credentials to receive access_token + refresh_token.
@@ -54,8 +56,12 @@ Resources (read-only, horizon://<path>):
   horizon://config/* — RBAC, authenticators, TrueSSO, settings, infrastructure config
   horizon://monitor/* — App Volumes, event DB, RDS servers, SAML, TrueSSO, pods, datastores
 
-Always confirm with the user before performing destructive operations
-(logoff, rebuild, shutdown, delete).
+Destructive operations (deletes, logoff/disconnect/reset, machine shutdown/restart/
+reset/rebuild/archive, disabling pools or farms, revoking entitlements, changing global
+policies or settings) ask the user to confirm directly in the MCP client before running.
+Explain what you're about to do and why before calling them; if the user cancels, don't
+retry without asking. Clients that can't show confirmation prompts are refused unless
+the operator sets HORIZON_CONFIRMATION=flag.
 """,
 )
 

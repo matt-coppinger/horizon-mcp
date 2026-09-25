@@ -5,6 +5,7 @@ from fastmcp import FastMCP
 
 from ..client import api_delete, api_get, api_post, api_put, seg
 from ._annotations import DESTRUCTIVE, READ_ONLY
+from ._confirm import require_confirmation
 
 
 def register(mcp: FastMCP) -> None:
@@ -42,6 +43,11 @@ def register(mcp: FastMCP) -> None:
             list[str],
             "AD user or group IDs. Use search_ad_users_or_groups to find IDs.",
         ],
+        confirm: Annotated[
+            bool,
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
+        ] = False,
     ) -> dict:
         """Add, replace, or remove entitlements for a desktop or application pool.
 
@@ -67,6 +73,16 @@ def register(mcp: FastMCP) -> None:
                 "an explicit list of principals to revoke, or provide at least one "
                 "ad_user_or_group_id."
             )
+        if action != "add":
+            n = len(ad_user_or_group_ids)
+            what = (
+                f"Replace ALL entitlements on {pool_type} pool {pool_id} with {n} user(s)/group(s) — "
+                "anyone not in the list loses access"
+                if action == "replace"
+                else f"Revoke access to {pool_type} pool {pool_id} for {n} user(s)/group(s)"
+            )
+            await require_confirmation(f"{what}: {', '.join(ad_user_or_group_ids[:5])}"
+                                       f"{f' and {n - 5} more' if n > 5 else ''}.", confirm=confirm)
         spec = [{"id": pool_id, "ad_user_or_group_ids": ad_user_or_group_ids}]
         if action == "add":
             result = await api_post(f"/entitlements/v1/{pool_type}-pools", spec)

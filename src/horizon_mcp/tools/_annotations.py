@@ -18,3 +18,8 @@ IDEMPOTENT_UPDATE = {"readOnlyHint": False, "destructiveHint": False, "idempoten
 
 # May destroy data or access (deletes, rebuilds/resets, logoffs, force-closing apps).
 DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
+
+# Overwrites existing configuration or cuts off access in a way that's reversible but
+# disruptive (pool/farm config updates, disabling pools or farms, unassigning users).
+# destructiveHint=True so clients prompt before running these.
+DESTRUCTIVE_UPDATE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}

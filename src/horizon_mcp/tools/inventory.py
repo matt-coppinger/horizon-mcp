@@ -6,11 +6,14 @@ from typing import Annotated, Literal
 from fastmcp import FastMCP
 
 from ..client import api_delete, api_get, api_post, api_put, seg
-from ._annotations import ADDITIVE, DESTRUCTIVE, IDEMPOTENT_UPDATE, READ_ONLY
+from ._annotations import ADDITIVE, DESTRUCTIVE, DESTRUCTIVE_UPDATE, READ_ONLY
+from ._confirm import require_confirmation
 
 _MAX_MACHINE_COUNT = int(os.environ.get("HORIZON_MAX_MACHINE_COUNT", "500"))
 _MAX_BULK_DESTRUCTIVE = int(os.environ.get("HORIZON_MAX_BULK_DESTRUCTIVE", "20"))
 _DESTRUCTIVE_BULK_ACTIONS = {"rebuild", "reset", "archive"}
+# Machine actions that end user sessions or discard data — these need user confirmation.
+_CONFIRM_MACHINE_ACTIONS = {"shutdown", "restart", "reset", "rebuild", "archive"}
 
 _MACHINE_ACTIONS = {
     "shutdown": ("/inventory/v1/machines/action/shutdown", "object"),
@@ -24,6 +27,21 @@ _MACHINE_ACTIONS = {
 }
 
 _FORCE_APPLICABLE_ACTIONS = {"shutdown", "restart"}
+
+
+async def _label(path: str, resource_id: str) -> str:
+    """'name (id)' for a confirmation prompt; falls back to the bare ID if lookup fails."""
+    try:
+        info = await api_get(path)
+    except Exception:
+        return resource_id
+    name = (info or {}).get("display_name") or (info or {}).get("name")
+    return f"{name} ({resource_id})" if name else resource_id
+
+
+def _ids(ids: list[str], limit: int = 5) -> str:
+    shown = ", ".join(ids[:limit])
+    return f"{shown} and {len(ids) - limit} more" if len(ids) > limit else shown
 
 # Every property FarmUpdateSpec accepts. Used to filter a full get_rdsh_farm (v10)
 # response down to only fields safe to PUT back — verified live that FarmUpdateSpec
@@ -120,7 +138,7 @@ def register(mcp: FastMCP) -> None:
             )
         return result
 
-    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
+    @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
     async def update_desktop_pool(
         pool_id: Annotated[str, "Desktop pool ID — obtain from list_desktop_pools"],
         spec: Annotated[
@@ -150,9 +168,10 @@ def register(mcp: FastMCP) -> None:
         pool_id: Annotated[str, "Desktop pool ID — obtain from list_desktop_pools"],
         confirm: Annotated[
             bool,
-            "Must be explicitly True to proceed. Before setting this, call get_desktop_pool "
-            "and list_sessions (filtered by desktop_pool_id) to verify the pool is safe to "
-            "delete, then obtain explicit user approval.",
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client. "
+            "Before deleting, call get_desktop_pool and list_sessions (filtered by "
+            "desktop_pool_id) so you can tell the user what will be affected.",
         ] = False,
     ) -> dict:
         """Delete a desktop pool and all of its machines.
@@ -160,16 +179,15 @@ def register(mcp: FastMCP) -> None:
         CAUTION: This is irreversible. All machines in the pool are deleted and any active
         user sessions are terminated. Always confirm with the user before calling this.
         """
-        if not confirm:
-            raise ValueError(
-                "confirm=True is required. First call get_desktop_pool and list_sessions "
-                "(filter by desktop_pool_id) to verify no active sessions exist, then "
-                "obtain explicit user approval before re-calling with confirm=True."
-            )
+        label = await _label(f"/inventory/v13/desktop-pools/{seg(pool_id)}", pool_id)
+        await require_confirmation(
+            f"Delete desktop pool {label}, all of its machines, and end any active sessions in it.",
+            confirm=confirm,
+        )
         result = await api_delete(f"/inventory/v1/desktop-pools/{seg(pool_id)}")
         return result or {"success": True, "pool_id": pool_id}
 
-    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
+    @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
     async def desktop_pool_action(
         pool_ids: Annotated[list[str], "List of desktop pool IDs to act on"],
         action: Annotated[
@@ -179,6 +197,11 @@ def register(mcp: FastMCP) -> None:
             "enable-provisioning: resume VM provisioning. "
             "disable-provisioning: pause VM provisioning — use during maintenance windows.",
         ],
+        confirm: Annotated[
+            bool,
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
+        ] = False,
     ) -> dict:
         """Enable, disable, or toggle provisioning for one or more desktop pools.
 
@@ -186,6 +209,11 @@ def register(mcp: FastMCP) -> None:
         enable-provisioning/disable-provisioning controls whether new VMs are provisioned.
         Disabling provisioning is the correct way to pause scale-out during maintenance.
         """
+        if action.startswith("disable"):
+            what = "new user sessions" if action == "disable" else "VM provisioning"
+            await require_confirmation(
+                f"Disable {what} for {len(pool_ids)} desktop pool(s): {_ids(pool_ids)}.", confirm=confirm
+            )
         result = await api_post(f"/inventory/v1/desktop-pools/action/{action}", pool_ids)
         return result or {"success": True, "action": action, "pool_count": len(pool_ids)}
 
@@ -244,6 +272,11 @@ def register(mcp: FastMCP) -> None:
             "Force the operation even if sessions are active. "
             "Only applies to shutdown and restart — raises an error for other actions.",
         ] = False,
+        confirm: Annotated[
+            bool,
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
+        ] = False,
     ) -> dict:
         """Perform a bulk action on one or more machines.
 
@@ -272,6 +305,13 @@ def register(mcp: FastMCP) -> None:
                 "with the user before each batch. Raise HORIZON_MAX_BULK_DESTRUCTIVE to "
                 "increase the limit if this is intentional."
             )
+        if action in _CONFIRM_MACHINE_ACTIONS:
+            forced = " (forced, even with active sessions)" if force else ""
+            await require_confirmation(
+                f"{action.capitalize()} {len(machine_ids)} machine(s){forced}: {_ids(machine_ids)}. "
+                "Users on these machines lose their session and any unsaved work.",
+                confirm=confirm,
+            )
         path, body_style = _MACHINE_ACTIONS[action]
         if body_style == "object":
             body: list | dict = {"machineIds": machine_ids, "forceOperation": force}
@@ -280,7 +320,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_post(path, body)
         return result or {"success": True, "action": action, "machine_count": len(machine_ids)}
 
-    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
+    @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
     async def assign_machine_users(
         machine_id: Annotated[str, "Machine ID — obtain from list_machines"],
         user_ids: Annotated[
@@ -375,7 +415,7 @@ def register(mcp: FastMCP) -> None:
             )
         return result
 
-    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
+    @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
     async def update_rdsh_farm(
         farm_id: Annotated[str, "Farm ID — obtain from list_rdsh_farms"],
         spec: Annotated[
@@ -394,9 +434,10 @@ def register(mcp: FastMCP) -> None:
         farm_id: Annotated[str, "Farm ID — obtain from list_rdsh_farms"],
         confirm: Annotated[
             bool,
-            "Must be explicitly True to proceed. Before setting this, call get_rdsh_farm "
-            "and list_sessions to verify the farm has no active sessions, then obtain "
-            "explicit user approval.",
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client. "
+            "Before deleting, call get_rdsh_farm and list_sessions so you can tell the user "
+            "what will be affected.",
         ] = False,
     ) -> dict:
         """Delete an RDS farm and all of its servers.
@@ -404,16 +445,15 @@ def register(mcp: FastMCP) -> None:
         CAUTION: This is irreversible. All servers in the farm are deleted and any active
         user sessions are terminated. Always confirm with the user before calling this.
         """
-        if not confirm:
-            raise ValueError(
-                "confirm=True is required. First call get_rdsh_farm and list_sessions to "
-                "verify no active sessions exist, then obtain explicit user approval before "
-                "re-calling with confirm=True."
-            )
+        label = await _label(f"/inventory/v10/farms/{seg(farm_id)}", farm_id)
+        await require_confirmation(
+            f"Delete RDS farm {label}, all of its servers, and end any active sessions on it.",
+            confirm=confirm,
+        )
         result = await api_delete(f"/inventory/v1/farms/{seg(farm_id)}")
         return result or {"success": True, "farm_id": farm_id}
 
-    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
+    @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
     async def rdsh_farm_action(
         farm_ids: Annotated[list[str], "List of RDS farm IDs to act on"],
         action: Annotated[
@@ -421,6 +461,11 @@ def register(mcp: FastMCP) -> None:
             "enable: allow new sessions to this farm. "
             "disable: prevent new sessions (existing sessions continue until they end).",
         ],
+        confirm: Annotated[
+            bool,
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
+        ] = False,
     ) -> dict:
         """Enable or disable one or more RDS farms.
 
@@ -434,6 +479,12 @@ def register(mcp: FastMCP) -> None:
         update round trip, not a guess. Reports per-farm results if any still fail.
         """
         enabled = action == "enable"
+        if not enabled:
+            await require_confirmation(
+                f"Disable {len(farm_ids)} RDS farm(s) — no new sessions will be routed to them: "
+                f"{_ids(farm_ids)}.",
+                confirm=confirm,
+            )
 
         async def _set_enabled(farm_id: str) -> object:
             current = await api_get(f"/inventory/v10/farms/{seg(farm_id)}")
@@ -512,7 +563,7 @@ def register(mcp: FastMCP) -> None:
         result = await api_post("/inventory/v1/application-pools", body)
         return result or {"success": True}
 
-    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
+    @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
     async def update_application_pool(
         pool_id: Annotated[str, "Application pool ID — obtain from list_application_pools"],
         spec: Annotated[
@@ -530,7 +581,8 @@ def register(mcp: FastMCP) -> None:
         pool_id: Annotated[str, "Application pool ID — obtain from list_application_pools"],
         confirm: Annotated[
             bool,
-            "Must be explicitly True to proceed. Obtain explicit user approval before setting.",
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
         ] = False,
     ) -> dict:
         """Delete a published application pool.
@@ -538,11 +590,11 @@ def register(mcp: FastMCP) -> None:
         CAUTION: Users will immediately lose access to this application.
         Always confirm with the user before calling this.
         """
-        if not confirm:
-            raise ValueError(
-                "confirm=True is required. Obtain explicit user approval before "
-                "re-calling with confirm=True."
-            )
+        label = await _label(f"/inventory/v1/application-pools/{seg(pool_id)}", pool_id)
+        await require_confirmation(
+            f"Delete application pool {label}. Entitled users immediately lose access to it.",
+            confirm=confirm,
+        )
         result = await api_delete(f"/inventory/v1/application-pools/{seg(pool_id)}")
         return result or {"success": True, "pool_id": pool_id}
 
@@ -581,17 +633,26 @@ def register(mcp: FastMCP) -> None:
         """Get detailed information about a specific user session."""
         return await api_get(f"/inventory/v1/sessions/{seg(session_id)}")
 
-    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
+    @mcp.tool(annotations=DESTRUCTIVE)
     async def disconnect_sessions(
         session_ids: Annotated[
             list[str],
             "List of session IDs to disconnect. The session remains active but the client is disconnected.",
         ],
+        confirm: Annotated[
+            bool,
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
+        ] = False,
     ) -> dict:
         """Disconnect one or more user sessions (sessions remain active, clients are disconnected).
 
         The user's applications keep running. Use logoff_sessions to fully terminate sessions.
         """
+        await require_confirmation(
+            f"Disconnect {len(session_ids)} user session(s): {_ids(session_ids)}. Their apps keep running.",
+            confirm=confirm,
+        )
         result = await api_post("/inventory/v1/sessions/action/disconnect", session_ids)
         return result or {"success": True, "session_count": len(session_ids)}
 
@@ -602,12 +663,22 @@ def register(mcp: FastMCP) -> None:
             bool,
             "If true, log off locked sessions. If false, locked sessions are skipped.",
         ] = False,
+        confirm: Annotated[
+            bool,
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
+        ] = False,
     ) -> dict:
         """Log off one or more user sessions, terminating their running applications.
 
         CAUTION: This will close all running applications in the session.
         Unsaved data will be lost. Always confirm with the user before calling this.
         """
+        await require_confirmation(
+            f"Log off {len(session_ids)} user session(s){' (including locked sessions)' if forced else ''}: "
+            f"{_ids(session_ids)}. Running applications close and unsaved work is lost.",
+            confirm=confirm,
+        )
         # Horizon API expects the session ID list as the POST body and
         # forced as a URL query parameter (not a body field).
         result = await api_post(
@@ -625,6 +696,11 @@ def register(mcp: FastMCP) -> None:
             "reset: hard power-cycle the VM (immediate, may cause data loss). "
             "restart: graceful reboot of the VM (user is logged off first).",
         ],
+        confirm: Annotated[
+            bool,
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
+        ] = False,
     ) -> dict:
         """Reset or restart the virtual machine backing one or more sessions.
 
@@ -633,6 +709,11 @@ def register(mcp: FastMCP) -> None:
         restart attempts a graceful reboot but the session will still end.
         Always confirm with the user before calling this.
         """
+        await require_confirmation(
+            f"{action.capitalize()} the VMs behind {len(session_ids)} user session(s): {_ids(session_ids)}. "
+            "The sessions end and unsaved work may be lost.",
+            confirm=confirm,
+        )
         result = await api_post(f"/inventory/v1/sessions/action/{action}", session_ids)
         return result or {"success": True, "action": action, "session_count": len(session_ids)}
 
