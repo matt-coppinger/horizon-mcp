@@ -1,4 +1,4 @@
-"""Tests for client.py: _parse_error, _reject_traversal, get_client env validation, reset_client."""
+"""Tests for client.py: _parse_error, _reject_traversal, seg, get_client env validation, reset_client."""
 import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,6 +14,7 @@ from horizon_mcp.client import (
     api_put,
     get_client,
     reset_client,
+    seg,
 )
 
 
@@ -103,6 +104,54 @@ def test_reject_traversal_blocks_dot_segments(path):
 )
 def test_reject_traversal_allows_normal_paths(path):
     _reject_traversal(path)  # should not raise
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/inventory/v1/desktop-pools/abc?x=1",
+        "/inventory/v1/farms/abc#/rest",
+        "/inventory/v1/farms/abc\\..\\config",
+    ],
+)
+def test_reject_traversal_blocks_query_fragment_backslash(path):
+    with pytest.raises(ValueError, match="Invalid request path"):
+        _reject_traversal(path)
+
+
+# ── seg ──────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "value",
+    ["3f2b1c9e-8d7a-4e6f-9b0c-1a2b3c4d5e6f", "S-1-5-32-544", "vm-2001", "farm.prod.01"],
+)
+def test_seg_leaves_real_horizon_ids_unchanged(value):
+    assert seg(value) == value
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("../../config/v1/roles/x", "..%2F..%2Fconfig%2Fv1%2Froles%2Fx"),
+        ("a?x=1", "a%3Fx%3D1"),
+        ("a#b", "a%23b"),
+        ("..;", "..%3B"),
+        ("%2e%2e", "%252e%252e"),
+    ],
+)
+def test_seg_encodes_everything_that_could_change_the_path(value, expected):
+    assert seg(value) == expected
+
+
+@pytest.mark.parametrize("value", ["", ".", ".."])
+def test_seg_rejects_empty_and_dot_ids(value):
+    with pytest.raises(ValueError, match="Invalid ID"):
+        seg(value)
+
+
+def test_seg_encoded_traversal_id_is_still_rejected_by_guard():
+    with pytest.raises(ValueError, match="dot-segment"):
+        _reject_traversal(f"/inventory/v1/desktop-pools/{seg('../../config')}")
 
 
 async def _mock_client(monkeypatch, method: str):

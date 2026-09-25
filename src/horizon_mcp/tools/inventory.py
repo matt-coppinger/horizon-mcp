@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 
-from ..client import api_delete, api_get, api_post, api_put
+from ..client import api_delete, api_get, api_post, api_put, seg
 from ._annotations import ADDITIVE, DESTRUCTIVE, IDEMPOTENT_UPDATE, READ_ONLY
 
 _MAX_MACHINE_COUNT = int(os.environ.get("HORIZON_MAX_MACHINE_COUNT", "500"))
@@ -70,7 +70,7 @@ def register(mcp: FastMCP) -> None:
         those fields, making a real get-then-update round trip impossible without
         guessing at values Horizon never returns.
         """
-        return await api_get(f"/inventory/v13/desktop-pools/{pool_id}")
+        return await api_get(f"/inventory/v13/desktop-pools/{seg(pool_id)}")
 
     @mcp.tool(annotations=ADDITIVE)
     async def create_desktop_pool(
@@ -142,7 +142,7 @@ def register(mcp: FastMCP) -> None:
         ],
     ) -> dict:
         """Update an existing desktop pool's configuration."""
-        result = await api_put(f"/inventory/v1/desktop-pools/{pool_id}", spec)
+        result = await api_put(f"/inventory/v1/desktop-pools/{seg(pool_id)}", spec)
         return result or {"success": True, "pool_id": pool_id}
 
     @mcp.tool(annotations=DESTRUCTIVE)
@@ -166,7 +166,7 @@ def register(mcp: FastMCP) -> None:
                 "(filter by desktop_pool_id) to verify no active sessions exist, then "
                 "obtain explicit user approval before re-calling with confirm=True."
             )
-        result = await api_delete(f"/inventory/v1/desktop-pools/{pool_id}")
+        result = await api_delete(f"/inventory/v1/desktop-pools/{seg(pool_id)}")
         return result or {"success": True, "pool_id": pool_id}
 
     @mcp.tool(annotations=IDEMPOTENT_UPDATE)
@@ -221,7 +221,7 @@ def register(mcp: FastMCP) -> None:
         machine_id: Annotated[str, "Machine ID — obtain from list_machines"],
     ) -> dict:
         """Get detailed information about a specific machine."""
-        return await api_get(f"/inventory/v1/machines/{machine_id}")
+        return await api_get(f"/inventory/v1/machines/{seg(machine_id)}")
 
     @mcp.tool(annotations=DESTRUCTIVE)
     async def machine_action(
@@ -300,7 +300,7 @@ def register(mcp: FastMCP) -> None:
         """
         endpoint = "assign-users" if action == "assign" else "unassign-users"
         result = await api_post(
-            f"/inventory/v1/machines/{machine_id}/action/{endpoint}",
+            f"/inventory/v1/machines/{seg(machine_id)}/action/{endpoint}",
             {"user_ids": user_ids},
         )
         return result or {"success": True, "action": action, "machine_id": machine_id}
@@ -329,7 +329,7 @@ def register(mcp: FastMCP) -> None:
         update_rdsh_farm's schema can require — verified live, zero gap (mirrors
         the same fix applied to get_desktop_pool).
         """
-        return await api_get(f"/inventory/v10/farms/{farm_id}")
+        return await api_get(f"/inventory/v10/farms/{seg(farm_id)}")
 
     @mcp.tool(annotations=ADDITIVE)
     async def create_rdsh_farm(
@@ -386,7 +386,7 @@ def register(mcp: FastMCP) -> None:
         ],
     ) -> dict:
         """Update an existing RDS farm's configuration."""
-        result = await api_put(f"/inventory/v1/farms/{farm_id}", spec)
+        result = await api_put(f"/inventory/v1/farms/{seg(farm_id)}", spec)
         return result or {"success": True, "farm_id": farm_id}
 
     @mcp.tool(annotations=DESTRUCTIVE)
@@ -410,7 +410,7 @@ def register(mcp: FastMCP) -> None:
                 "verify no active sessions exist, then obtain explicit user approval before "
                 "re-calling with confirm=True."
             )
-        result = await api_delete(f"/inventory/v1/farms/{farm_id}")
+        result = await api_delete(f"/inventory/v1/farms/{seg(farm_id)}")
         return result or {"success": True, "farm_id": farm_id}
 
     @mcp.tool(annotations=IDEMPOTENT_UPDATE)
@@ -436,12 +436,12 @@ def register(mcp: FastMCP) -> None:
         enabled = action == "enable"
 
         async def _set_enabled(farm_id: str) -> object:
-            current = await api_get(f"/inventory/v10/farms/{farm_id}")
+            current = await api_get(f"/inventory/v10/farms/{seg(farm_id)}")
             if current is None:
                 raise ValueError(f"Farm {farm_id} not found")
             spec = {k: v for k, v in current.items() if k in _FARM_UPDATE_FIELDS}
             spec["enabled"] = enabled
-            return await api_put(f"/inventory/v1/farms/{farm_id}", spec)
+            return await api_put(f"/inventory/v1/farms/{seg(farm_id)}", spec)
 
         coros = [_set_enabled(farm_id) for farm_id in farm_ids]
         results = await asyncio.gather(*coros, return_exceptions=True)
@@ -472,7 +472,7 @@ def register(mcp: FastMCP) -> None:
         pool_id: Annotated[str, "Application pool ID — obtain from list_application_pools"],
     ) -> dict:
         """Get detailed information about a specific application pool."""
-        return await api_get(f"/inventory/v1/application-pools/{pool_id}")
+        return await api_get(f"/inventory/v1/application-pools/{seg(pool_id)}")
 
     @mcp.tool(annotations=ADDITIVE)
     async def create_application_pool(
@@ -522,7 +522,7 @@ def register(mcp: FastMCP) -> None:
         ],
     ) -> dict:
         """Update an existing application pool's configuration."""
-        result = await api_put(f"/inventory/v1/application-pools/{pool_id}", spec)
+        result = await api_put(f"/inventory/v1/application-pools/{seg(pool_id)}", spec)
         return result or {"success": True, "pool_id": pool_id}
 
     @mcp.tool(annotations=DESTRUCTIVE)
@@ -543,7 +543,7 @@ def register(mcp: FastMCP) -> None:
                 "confirm=True is required. Obtain explicit user approval before "
                 "re-calling with confirm=True."
             )
-        result = await api_delete(f"/inventory/v1/application-pools/{pool_id}")
+        result = await api_delete(f"/inventory/v1/application-pools/{seg(pool_id)}")
         return result or {"success": True, "pool_id": pool_id}
 
     # ── Sessions ───────────────────────────────────────────────────────────────
@@ -579,7 +579,7 @@ def register(mcp: FastMCP) -> None:
         session_id: Annotated[str, "Session ID — obtain from list_sessions"],
     ) -> dict:
         """Get detailed information about a specific user session."""
-        return await api_get(f"/inventory/v1/sessions/{session_id}")
+        return await api_get(f"/inventory/v1/sessions/{seg(session_id)}")
 
     @mcp.tool(annotations=IDEMPOTENT_UPDATE)
     async def disconnect_sessions(

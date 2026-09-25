@@ -2,7 +2,7 @@
 import asyncio
 import os
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 import httpx
 
@@ -69,6 +69,24 @@ def _reject_traversal(path: str) -> None:
     decoded = unquote(path)
     if any(segment in (".", "..") for segment in decoded.split("/")):
         raise ValueError(f"Invalid request path (contains a dot-segment): {path!r}")
+    # Paths are built from literals plus seg()-encoded IDs, so none of these
+    # should ever appear raw — they'd add a query string, cut off the rest of
+    # the path, or be treated as a separator by some servers.
+    if any(ch in path for ch in "?#\\"):
+        raise ValueError(f"Invalid request path (contains ?, # or \\): {path!r}")
+
+
+def seg(value: str) -> str:
+    """Percent-encode a caller-supplied ID for use as a single URL path segment.
+
+    Every character outside [A-Za-z0-9_.~-] is encoded, so an ID can never add
+    path segments, a query string or a fragment. Real Horizon IDs (UUIDs,
+    SIDs like S-1-5-32-544, vCenter refs like vm-2001) pass through unchanged.
+    """
+    value = str(value)
+    if not value or value in (".", ".."):
+        raise ValueError(f"Invalid ID: {value!r}")
+    return quote(value, safe="")
 
 
 def _parse_error(resp: httpx.Response) -> str:

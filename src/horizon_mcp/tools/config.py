@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 
-from ..client import api_get, api_post, api_put
+from ..client import api_get, api_post, api_put, seg
 from ._annotations import ADDITIVE, IDEMPOTENT_UPDATE, READ_ONLY
 
 
@@ -21,7 +21,7 @@ def register(mcp: FastMCP) -> None:
         server_id: Annotated[str, "Connection server ID"],
     ) -> dict:
         """Get configuration details for a specific Connection Server."""
-        return await api_get(f"/config/v1/connection-servers/{server_id}")
+        return await api_get(f"/config/v1/connection-servers/{seg(server_id)}")
 
     # ── Virtual Centers ────────────────────────────────────────────────────────
 
