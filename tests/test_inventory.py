@@ -336,6 +336,36 @@ async def test_delete_desktop_pool_confirm_true_deletes_correct_path(tools):
     assert result == {"success": True, "pool_id": "pool-abc"}
 
 
+# ── list_rdsh_farms / get_rdsh_farm ─────────────────────────────────────────────
+# Must use v10, not v1 — v1's response is missing most fields update_rdsh_farm
+# (and rdsh_farm_action's get-then-update round trip) need (verified live).
+
+async def test_list_rdsh_farms_uses_v10(tools):
+    captured: dict = {}
+
+    async def fake_get(path, params=None):
+        captured["path"] = path
+        return [{"id": "farm-1"}]
+
+    with patch("horizon_mcp.tools.inventory.api_get", side_effect=fake_get):
+        await tools["list_rdsh_farms"]()
+
+    assert captured["path"] == "/inventory/v10/farms"
+
+
+async def test_get_rdsh_farm_uses_v10(tools):
+    captured: dict = {}
+
+    async def fake_get(path, params=None):
+        captured["path"] = path
+        return {"id": "farm-abc"}
+
+    with patch("horizon_mcp.tools.inventory.api_get", side_effect=fake_get):
+        await tools["get_rdsh_farm"](farm_id="farm-abc")
+
+    assert captured["path"] == "/inventory/v10/farms/farm-abc"
+
+
 # ── create_rdsh_farm ───────────────────────────────────────────────────────────
 
 async def test_create_rdsh_farm_posts_spec_verbatim(tools):
@@ -429,34 +459,66 @@ async def test_delete_rdsh_farm_confirm_true_deletes_correct_path(tools):
 
 
 # ── rdsh_farm_action ────────────────────────────────────────────────────────────
-# Farms have no bulk enable/disable endpoint (unlike desktop pools) — this sends
-# one PUT per farm with {"enabled": ...} in the body.
+# Farms have no bulk enable/disable endpoint (unlike desktop pools), and
+# FarmUpdateSpec requires several fields beyond "enabled" (verified live — a bare
+# {"enabled": ...} PUT is rejected). So this fetches each farm's full current
+# state (v10) first, keeps only valid FarmUpdateSpec fields, sets "enabled", and
+# PUTs the complete spec back.
+
+_FAKE_FARM_V10 = {
+    "id": "farm-1",
+    "name": "internal-name",
+    "created_at": "2026-01-01T00:00:00Z",
+    "access_group_id": "ag-1",
+    "display_name": "Farm One",
+    "display_protocol_settings": {"default_display_protocol": "BLAST"},
+    "enabled": True,
+    "server_error_threshold": 0,
+    "session_settings": {"disconnected_session_timeout_policy": "NEVER"},
+    "use_custom_script_for_load_balancing": False,
+}
+
 
 @pytest.mark.parametrize("action,enabled", [("enable", True), ("disable", False)])
-async def test_rdsh_farm_action_puts_enabled_per_farm(tools, action, enabled):
-    captured: list = []
+async def test_rdsh_farm_action_fetches_v10_and_puts_filtered_spec(tools, action, enabled):
+    get_calls: list = []
+    put_calls: list = []
+
+    async def fake_get(path, params=None):
+        get_calls.append(path)
+        return dict(_FAKE_FARM_V10)
 
     async def fake_put(path, body):
-        captured.append((path, body))
+        put_calls.append((path, body))
         return None
 
-    with patch("horizon_mcp.tools.inventory.api_put", side_effect=fake_put):
-        result = await tools["rdsh_farm_action"](farm_ids=["farm-1", "farm-2"], action=action)
+    with patch("horizon_mcp.tools.inventory.api_get", side_effect=fake_get), \
+         patch("horizon_mcp.tools.inventory.api_put", side_effect=fake_put):
+        result = await tools["rdsh_farm_action"](farm_ids=["farm-1"], action=action)
 
-    assert captured == [
-        ("/inventory/v1/farms/farm-1", {"enabled": enabled}),
-        ("/inventory/v1/farms/farm-2", {"enabled": enabled}),
-    ]
-    assert result == {"action": action, "farm_count": 2, "succeeded": 2}
+    assert get_calls == ["/inventory/v10/farms/farm-1"]
+    assert len(put_calls) == 1
+    put_path, put_body = put_calls[0]
+    assert put_path == "/inventory/v1/farms/farm-1"
+    # Read-only/identity fields must be stripped — not valid FarmUpdateSpec properties.
+    assert "id" not in put_body
+    assert "name" not in put_body
+    assert "created_at" not in put_body
+    # Valid update fields pass through unchanged, and enabled reflects the action.
+    assert put_body["access_group_id"] == "ag-1"
+    assert put_body["display_name"] == "Farm One"
+    assert put_body["enabled"] == enabled
+    assert result == {"action": action, "farm_count": 1, "succeeded": 1}
 
 
 async def test_rdsh_farm_action_reports_partial_failure(tools):
-    async def fake_put(path, body):
-        if path.endswith("farm-bad"):
+    async def fake_get(path, params=None):
+        if "farm-bad" in path:
             raise ValueError("boom")
-        return None
+        return dict(_FAKE_FARM_V10)
 
-    with patch("horizon_mcp.tools.inventory.api_put", side_effect=fake_put):
+    with patch("horizon_mcp.tools.inventory.api_get", side_effect=fake_get), \
+         patch("horizon_mcp.tools.inventory.api_put", return_value=None):
         result = await tools["rdsh_farm_action"](
             farm_ids=["farm-1", "farm-bad"], action="disable",
         )
@@ -464,6 +526,16 @@ async def test_rdsh_farm_action_reports_partial_failure(tools):
     assert result["farm_count"] == 2
     assert result["succeeded"] == 1
     assert "farm-bad" in result["errors"]
+
+
+async def test_rdsh_farm_action_raises_when_farm_not_found(tools):
+    with patch("horizon_mcp.tools.inventory.api_get", return_value=None), \
+         patch("horizon_mcp.tools.inventory.api_put") as mock_put:
+        result = await tools["rdsh_farm_action"](farm_ids=["missing-farm"], action="enable")
+
+    mock_put.assert_not_called()
+    assert result["succeeded"] == 0
+    assert "missing-farm" in result["errors"]
 
 
 # ── create_application_pool ────────────────────────────────────────────────────
