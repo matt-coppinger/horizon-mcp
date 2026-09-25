@@ -6,6 +6,7 @@ from fastmcp import FastMCP
 
 from ..client import api_get, api_post
 from ._annotations import DESTRUCTIVE, READ_ONLY
+from ._confirm import require_confirmation
 
 _DIAGNOSTIC_ASPECTS: dict[str, tuple[str, str]] = {
     "logon_timing": ("/helpdesk/v3/logon-timing/logon-segment", "dict"),
@@ -79,12 +80,22 @@ def register(mcp: FastMCP) -> None:
             str,
             "Remote application ID to terminate. Use diagnose_session with aspects=['remote_applications'] to find IDs.",
         ],
+        confirm: Annotated[
+            bool,
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
+        ] = False,
     ) -> dict:
         """Terminate a specific remote application running in a session.
 
         CAUTION: The application will be force-closed. Unsaved data will be lost.
         Confirm with the user before calling this.
         """
+        await require_confirmation(
+            f"Force-close remote application {remote_application_id} in session {session_id}. "
+            "Unsaved work in it is lost.",
+            confirm=confirm,
+        )
         result = await api_post(
             "/helpdesk/v1/performance/remote-application/action/end-remote-application",
             params={"session_id": session_id, "remote_application_id": remote_application_id},

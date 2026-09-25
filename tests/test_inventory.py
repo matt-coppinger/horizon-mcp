@@ -312,14 +312,18 @@ async def test_update_desktop_pool_puts_to_correct_path(tools):
 
 # ── delete_desktop_pool ────────────────────────────────────────────────────────
 
-async def test_delete_desktop_pool_requires_confirm(tools):
-    with pytest.raises(ValueError, match="confirm=True is required"):
+async def test_delete_desktop_pool_asks_user_to_confirm(tools, confirmations):
+    with patch("horizon_mcp.tools.inventory.api_delete", return_value=None):
         await tools["delete_desktop_pool"](pool_id="pool-abc")
+    assert len(confirmations) == 1 and "Delete" in confirmations[0]
 
 
-async def test_delete_desktop_pool_confirm_false_raises(tools):
-    with pytest.raises(ValueError, match="confirm=True is required"):
-        await tools["delete_desktop_pool"](pool_id="pool-abc", confirm=False)
+async def test_delete_desktop_pool_declined_does_not_delete(tools, confirmations):
+    confirmations.approve = False
+    with patch("horizon_mcp.tools.inventory.api_delete") as mock_delete:
+        with pytest.raises(ValueError, match="Cancelled by the user"):
+            await tools["delete_desktop_pool"](pool_id="pool-abc")
+    mock_delete.assert_not_called()
 
 
 async def test_delete_desktop_pool_confirm_true_deletes_correct_path(tools):
@@ -434,14 +438,18 @@ async def test_update_rdsh_farm_puts_to_correct_path(tools):
 
 # ── delete_rdsh_farm ───────────────────────────────────────────────────────────
 
-async def test_delete_rdsh_farm_requires_confirm(tools):
-    with pytest.raises(ValueError, match="confirm=True is required"):
+async def test_delete_rdsh_farm_asks_user_to_confirm(tools, confirmations):
+    with patch("horizon_mcp.tools.inventory.api_delete", return_value=None):
         await tools["delete_rdsh_farm"](farm_id="farm-xyz")
+    assert len(confirmations) == 1 and "Delete" in confirmations[0]
 
 
-async def test_delete_rdsh_farm_confirm_false_raises(tools):
-    with pytest.raises(ValueError, match="confirm=True is required"):
-        await tools["delete_rdsh_farm"](farm_id="farm-xyz", confirm=False)
+async def test_delete_rdsh_farm_declined_does_not_delete(tools, confirmations):
+    confirmations.approve = False
+    with patch("horizon_mcp.tools.inventory.api_delete") as mock_delete:
+        with pytest.raises(ValueError, match="Cancelled by the user"):
+            await tools["delete_rdsh_farm"](farm_id="farm-xyz")
+    mock_delete.assert_not_called()
 
 
 async def test_delete_rdsh_farm_confirm_true_deletes_correct_path(tools):

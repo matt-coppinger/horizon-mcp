@@ -4,7 +4,23 @@ from typing import Annotated, Literal
 from fastmcp import FastMCP
 
 from ..client import api_get, api_post, api_put, seg
-from ._annotations import ADDITIVE, IDEMPOTENT_UPDATE, READ_ONLY
+from ._annotations import ADDITIVE, DESTRUCTIVE_UPDATE, READ_ONLY
+from ._confirm import require_confirmation
+
+
+async def _describe_changes(path: str, spec: dict) -> str:
+    """List the top-level fields `spec` would change, for a confirmation prompt."""
+    try:
+        current = await api_get(path) or {}
+    except Exception:
+        return f"fields: {', '.join(sorted(spec)) or '(none)'}"
+    changed = [
+        f"{k}: {current.get(k)!r} → {v!r}" for k, v in sorted(spec.items()) if current.get(k) != v
+    ]
+    if not changed:
+        return "no fields differ from the current values"
+    more = f" (+{len(changed) - 8} more)" if len(changed) > 8 else ""
+    return "; ".join(changed[:8]) + more
 
 
 def register(mcp: FastMCP) -> None:
@@ -52,23 +68,30 @@ def register(mcp: FastMCP) -> None:
         clipboard settings, and other environment-wide policy settings."""
         return await api_get("/config/v1/global-policies")
 
-    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
+    @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
     async def update_global_policies(
         spec: Annotated[
             dict,
             "Updated global policies object. Call get_global_policies first, modify only the "
             "fields you intend to change, then pass the full object here.",
         ],
+        confirm: Annotated[
+            bool,
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
+        ] = False,
     ) -> dict:
         """Update global VDI policies (USB redirection, clipboard, multimedia redirection).
 
         Always call get_global_policies first to read current values.
         Only modify the specific fields you intend to change — pass the full object back.
         """
+        changes = await _describe_changes("/config/v1/global-policies", spec)
+        await require_confirmation(f"Change Horizon global policies — {changes}.", confirm=confirm)
         result = await api_put("/config/v1/global-policies", spec)
         return result or {"success": True}
 
-    @mcp.tool(annotations=IDEMPOTENT_UPDATE)
+    @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
     async def update_settings(
         setting_type: Annotated[
             Literal["general", "security", "client", "feature", "agent-restriction"],
@@ -80,6 +103,11 @@ def register(mcp: FastMCP) -> None:
             "Updated settings object. Read current values first, modify only the fields "
             "you intend to change, then pass the full object here.",
         ],
+        confirm: Annotated[
+            bool,
+            "Only used when the server runs with HORIZON_CONFIRMATION=flag (clients without "
+            "elicitation). Otherwise the user is asked to confirm directly in the client.",
+        ] = False,
     ) -> dict:
         """Update a Horizon settings section.
 
@@ -99,6 +127,8 @@ def register(mcp: FastMCP) -> None:
             "feature": "/config/v1/settings/feature",
             "agent-restriction": "/config/v1/settings/agent-restriction-settings",
         }
+        changes = await _describe_changes(paths[setting_type], spec)
+        await require_confirmation(f"Change Horizon {setting_type} settings — {changes}.", confirm=confirm)
         result = await api_put(paths[setting_type], spec)
         return result or {"success": True, "setting_type": setting_type}
 

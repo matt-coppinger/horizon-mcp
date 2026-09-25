@@ -47,6 +47,23 @@ def test_create_tools_are_not_read_only_and_not_destructive(registered):
 
 def test_no_tool_claims_open_world():
     # Horizon is a closed enterprise system — no tool here talks to the open web.
-    from horizon_mcp.tools._annotations import ADDITIVE, DESTRUCTIVE, IDEMPOTENT_UPDATE, READ_ONLY
-    for preset in (READ_ONLY, ADDITIVE, IDEMPOTENT_UPDATE, DESTRUCTIVE):
+    from horizon_mcp.tools._annotations import (
+        ADDITIVE, DESTRUCTIVE, DESTRUCTIVE_UPDATE, IDEMPOTENT_UPDATE, READ_ONLY,
+    )
+    for preset in (READ_ONLY, ADDITIVE, IDEMPOTENT_UPDATE, DESTRUCTIVE, DESTRUCTIVE_UPDATE):
         assert preset["openWorldHint"] is False
+
+
+# Every tool that asks the user to confirm must also advertise destructiveHint=True,
+# so clients that don't support elicitation still know to prompt.
+CONFIRMING_TOOLS = [
+    "delete_desktop_pool", "delete_rdsh_farm", "delete_application_pool", "machine_action",
+    "logoff_sessions", "disconnect_sessions", "reset_or_restart_sessions", "desktop_pool_action",
+    "rdsh_farm_action", "end_remote_application", "set_pool_entitlements",
+    "update_global_policies", "update_settings",
+]
+
+
+@pytest.mark.parametrize("name", CONFIRMING_TOOLS)
+def test_confirming_tools_are_marked_destructive(registered, name):
+    assert registered.annotations[name].get("destructiveHint") is True
