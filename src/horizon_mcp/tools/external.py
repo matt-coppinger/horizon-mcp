@@ -208,19 +208,31 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=READ_ONLY)
     async def list_network_interface_cards(
         vcenter_id: Annotated[str, "vCenter ID — obtain from list_virtual_centers"],
-        base_vm_id: Annotated[str, "Base VM ID — obtain from list_base_vms (optional)"] = "",
-        base_snapshot_id: Annotated[str, "Base snapshot ID — obtain from list_base_vm_snapshots (optional)"] = "",
-        vm_template_id: Annotated[str, "VM template ID — obtain from list_vm_templates (optional)"] = "",
+        base_vm_id: Annotated[
+            str, "Base VM ID — obtain from list_base_vms. Either this or vm_template_id is required."
+        ] = "",
+        base_snapshot_id: Annotated[
+            str, "Base snapshot ID — obtain from list_base_vm_snapshots (optional, with base_vm_id)"
+        ] = "",
+        vm_template_id: Annotated[
+            str, "VM template ID — obtain from list_vm_templates. Either this or base_vm_id is required."
+        ] = "",
     ) -> list:
-        """List network interface cards (NICs) available for pool or farm NIC configuration.
+        """List the network interface cards (NICs) on a base VM or VM template.
 
-        The nic_id from these results pairs with a network_label_id (from list_network_labels)
-        in the nics array of create_desktop_pool and create_rdsh_farm provisioning_settings:
-          "nics": [{"nic_id": "<id>", "network_label_id": "<id from list_network_labels>"}]
+        Horizon requires either base_vm_id (instant-clone pools/farms, optionally with
+        base_snapshot_id) or vm_template_id (full-clone pools) — verified live, omitting
+        both returns 400.
 
-        Pass base_vm_id + base_snapshot_id to filter NICs for an instant-clone pool,
-        or vm_template_id to filter NICs for a full/linked-clone pool.
+        Each result's id is the network_interface_card_id in the top-level nics array of
+        create_desktop_pool / create_rdsh_farm:
+          "nics": [{"network_interface_card_id": "<id>",
+                    "network_label_assignment_specs": [...]}]
         """
+        if not base_vm_id and not vm_template_id:
+            raise ValueError(
+                "Either base_vm_id (from list_base_vms) or vm_template_id (from list_vm_templates) is required."
+            )
         params: dict = {"vcenter_id": vcenter_id}
         if base_vm_id:
             params["base_vm_id"] = base_vm_id

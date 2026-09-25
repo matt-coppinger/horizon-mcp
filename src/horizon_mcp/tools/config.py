@@ -132,16 +132,30 @@ def register(mcp: FastMCP) -> None:
             "Image management resource to list: "
             "streams (publishing pipelines), versions (published images), tags (pool targets).",
         ],
+        stream_id: Annotated[
+            str,
+            "Image stream ID — required for versions and tags. Obtain from resource='streams'.",
+        ] = "",
     ) -> list:
         """List image management streams, versions, or tags.
 
+        Versions and tags belong to a stream, so Horizon requires a stream ID for them
+        (verified live — omitting it returns 400 "im_stream_id parameter is missing").
+        List streams first, then pass a stream's id as stream_id.
         """
         paths: dict[str, str] = {
             "streams": "/config/v1/im-streams",
             "versions": "/config/v1/im-versions",
             "tags": "/config/v1/im-tags",
         }
-        return await api_get(paths[resource]) or []
+        if resource == "streams":
+            return await api_get(paths[resource]) or []
+        if not stream_id:
+            raise ValueError(
+                f"stream_id is required for resource='{resource}'. "
+                "Call list_image_management(resource='streams') to get stream IDs."
+            )
+        return await api_get(paths[resource], {"im_stream_id": stream_id}) or []
 
     # ── Gateways ───────────────────────────────────────────────────────────────
 

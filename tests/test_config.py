@@ -14,20 +14,46 @@ def tools(mock_mcp: MockFastMCP):
 
 # ── list_image_management ──────────────────────────────────────────────────────
 
+async def test_list_image_management_streams_needs_no_stream_id(tools):
+    captured: dict = {}
+
+    async def fake_api_get(path, params=None):
+        captured["path"] = path
+        captured["params"] = params
+        return [{"id": "s1"}]
+
+    with patch("horizon_mcp.tools.config.api_get", side_effect=fake_api_get):
+        result = await tools["list_image_management"](resource="streams")
+
+    assert captured == {"path": "/config/v1/im-streams", "params": None}
+    assert result == [{"id": "s1"}]
+
+
 @pytest.mark.parametrize("resource,expected_path", [
-    ("streams", "/config/v1/im-streams"),
     ("versions", "/config/v1/im-versions"),
     ("tags", "/config/v1/im-tags"),
 ])
-async def test_list_image_management_routes_correctly(tools, resource, expected_path):
+async def test_list_image_management_passes_stream_id(tools, resource, expected_path):
+    captured: dict = {}
+
     async def fake_api_get(path, params=None):
-        assert path == expected_path
+        captured["path"] = path
+        captured["params"] = params
         return [{"id": resource}]
 
     with patch("horizon_mcp.tools.config.api_get", side_effect=fake_api_get):
-        result = await tools["list_image_management"](resource=resource)
+        result = await tools["list_image_management"](resource=resource, stream_id="s1")
 
+    assert captured == {"path": expected_path, "params": {"im_stream_id": "s1"}}
     assert result == [{"id": resource}]
+
+
+@pytest.mark.parametrize("resource", ["versions", "tags"])
+async def test_list_image_management_requires_stream_id(tools, resource):
+    with patch("horizon_mcp.tools.config.api_get") as mock_get:
+        with pytest.raises(ValueError, match="stream_id is required"):
+            await tools["list_image_management"](resource=resource)
+    mock_get.assert_not_called()
 
 
 async def test_list_image_management_returns_empty_on_none(tools):
