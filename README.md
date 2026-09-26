@@ -436,8 +436,13 @@ These tools, plus the `update_*` tools and `assign_machine_users`, also carry `d
 ## Running Tests
 
 ```bash
-uv run pytest tests/ -v
+uv sync --all-extras --all-groups
+uv run pytest -q          # unit tests
+uv run ruff check src     # lint
+uv run pyright src        # type check
 ```
+
+CI runs all of these on every pull request (tests on Python 3.11–3.13), plus a `pip-audit` scan of the locked dependencies.
 
 The unit tests are offline. The live integration tests in `tests/live/` are collected but skipped unless you point them at a server — see below.
 
@@ -494,6 +499,10 @@ HZ_LIVE_WRITES=1 HZ_LIVE_DESTRUCTIVE=1 HZ_BASE_VM=<base-vm> HZ_SNAPSHOT=<agent-s
 ```
 
 Add `-s` to watch each tool call and confirmation prompt as it happens. `-m "not live"` deselects the suite entirely.
+
+## Releases
+
+Versions follow [Semantic Versioning](https://semver.org/) and are tagged `vX.Y.Z` on `main`. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release, including breaking changes.
 
 ## Security Notes
 

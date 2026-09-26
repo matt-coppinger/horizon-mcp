@@ -96,3 +96,9 @@ def test_loopback_origin_allowed_only_on_loopback_bind(monkeypatch):
 def test_allowed_origins_env(monkeypatch):
     c = _client(monkeypatch, "0.0.0.0", allowed_origins="https://app.example.com")
     assert c.post("/mcp", headers={"Origin": "https://app.example.com"}).status_code == 200
+
+
+def test_unknown_transport_is_rejected(monkeypatch):
+    monkeypatch.setenv("MCP_TRANSPORT", "websocket")
+    with pytest.raises(SystemExit, match="Unknown MCP_TRANSPORT"):
+        entry.main()
