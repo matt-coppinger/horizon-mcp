@@ -671,3 +671,24 @@ async def test_delete_application_pool_deletes_correct_path(tools):
 
     assert captured["path"] == "/inventory/v1/application-pools/app-abc"
     assert result == {"success": True, "pool_id": "app-abc"}
+
+
+# Live 2606: the GET returns auto-discovered file_types with auto-update on, and the PUT
+# rejects that combination, so update_application_pool drops file_types in that case.
+
+async def test_update_application_pool_drops_auto_managed_file_types(tools):
+    spec = {"display_name": "App", "supported_file_types_data": {
+        "file_types": [{"type": ".txt"}], "enable_auto_update_file_types": True, "enable_auto_update_other_file_types": True}}
+    with patch("horizon_mcp.tools.inventory.api_put", return_value=None) as put:
+        await tools["update_application_pool"](pool_id="app-1", spec=spec)
+    sent = put.call_args.args[1]
+    assert sent["supported_file_types_data"] == {"enable_auto_update_file_types": True,
+                                                 "enable_auto_update_other_file_types": True}
+    assert "file_types" in spec["supported_file_types_data"]  # caller's dict not mutated
+
+
+async def test_update_application_pool_keeps_file_types_when_auto_update_off(tools):
+    spec = {"supported_file_types_data": {"file_types": [{"type": ".txt"}], "enable_auto_update_file_types": False}}
+    with patch("horizon_mcp.tools.inventory.api_put", return_value=None) as put:
+        await tools["update_application_pool"](pool_id="app-1", spec=spec)
+    assert put.call_args.args[1] == spec

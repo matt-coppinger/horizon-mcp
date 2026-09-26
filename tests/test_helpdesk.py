@@ -13,6 +13,14 @@ def tools(mock_mcp: MockFastMCP):
     return mock_mcp.tools
 
 
+@pytest.fixture(autouse=True)
+def internal_ids(monkeypatch):
+    """diagnose_session first looks up the session's internal_session_id (v3 session API)."""
+    async def fake(session_id):
+        return f"int-{session_id}"
+    monkeypatch.setattr("horizon_mcp.tools.helpdesk._internal_session_id", fake)
+
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 def test_diagnostic_aspects_keys():
@@ -78,7 +86,7 @@ async def test_diagnose_session_partial_failure_returns_error_string(tools):
             aspects=["logon_timing", "display_performance"],
         )
 
-    assert "Connection timeout" in result["logon_timing"]
+    assert "Connection timeout" in result["logon_timing"]["error"]
     assert result["display_performance"] == {"fps": 30}
 
 
@@ -100,7 +108,7 @@ async def test_diagnose_session_passes_session_id_to_each_call(tools):
     with patch("horizon_mcp.tools.helpdesk.api_get", side_effect=fake_api_get):
         await tools["diagnose_session"](session_id="my-session-id", aspects=["logon_timing"])
 
-    assert received_params == [{"internal_session_id": "my-session-id"}]
+    assert received_params == [{"internal_session_id": "int-my-session-id"}]
 
 
 async def test_diagnose_session_none_result_returns_empty(tools):
@@ -115,3 +123,36 @@ async def test_diagnose_session_none_result_returns_empty(tools):
 
     assert result["processes"] == []
     assert result["logon_timing"] == {}
+
+
+# ── internal_session_id lookup (verified live: help desk endpoints 404 on the session id) ──
+
+async def test_internal_session_id_comes_from_the_v3_session_api(monkeypatch):
+    monkeypatch.undo()
+    from horizon_mcp.tools.helpdesk import _internal_session_id
+
+    calls = []
+
+    async def fake_get(path, params=None):
+        calls.append(path)
+        return {"id": "s1", "internal_session_id": "internal-s1"}
+
+    with patch("horizon_mcp.tools.helpdesk.api_get", side_effect=fake_get):
+        assert await _internal_session_id("s1") == "internal-s1"
+    assert calls == ["/inventory/v3/sessions/s1"]
+
+
+async def test_internal_session_id_missing_raises(monkeypatch):
+    monkeypatch.undo()
+    from horizon_mcp.tools.helpdesk import _internal_session_id
+
+    with patch("horizon_mcp.tools.helpdesk.api_get", return_value={"id": "s1"}):
+        with pytest.raises(ValueError, match="no internal_session_id"):
+            await _internal_session_id("s1")
+
+
+async def test_remote_assistance_ticket_uses_v1_with_session_id(tools):
+    with patch("horizon_mcp.tools.helpdesk.api_get", return_value={"ticket": "x"}) as get:
+        await tools["get_remote_assistance_ticket"](session_id="s1")
+    assert get.call_args.args[0] == "/helpdesk/v1/remote-assistant-ticket"
+    assert get.call_args.kwargs["params"] == {"session_id": "s1"}

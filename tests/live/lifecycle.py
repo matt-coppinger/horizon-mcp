@@ -267,6 +267,7 @@ class Lifecycle:
         self.group_id: str | None = None
         self.user_id: str | None = None
         self.created: dict[str, dict] = {}   # kind → {"id", "name"}
+        self.pool_floating = False           # True if only the FLOATING fallback pool was accepted
         self.machine: dict | None = None     # the pool's (single) machine, once AVAILABLE
         self.machine_error = "the desktop pool was not created"
         self.farm_ready = False
@@ -577,7 +578,23 @@ class Lifecycle:
         if self.pool_placement:
             async with self.step("create_desktop_pool"):
                 spec = desktop_pool_spec(self.pool_placement, cfg.pool_name, cfg.pool_naming_pattern, desc)
-                await self._create("pool", "create_desktop_pool", {"spec": spec}, cfg.pool_name)
+                try:
+                    await self._create("pool", "create_desktop_pool", {"spec": spec}, cfg.pool_name)
+                except LiveToolError as first:
+                    if "pool" in self.created:
+                        raise
+                    # Diagnostic fallback: the FLOATING shape was verified live. If Horizon takes
+                    # it, the DEDICATED-specific fields are what it objected to.
+                    self.s.mark_last("INFO", "DEDICATED pool rejected; retrying with the verified FLOATING shape")
+                    spec = desktop_pool_spec(self.pool_placement, cfg.pool_name, cfg.pool_naming_pattern, desc,
+                                             dedicated=False)
+                    try:
+                        await self._create("pool", "create_desktop_pool", {"spec": spec}, cfg.pool_name)
+                    except LiveToolError:
+                        raise first from None
+                    self.pool_floating = True
+                    print("  !! Horizon accepted the FLOATING pool but not the DEDICATED one — "
+                          "assign_machine_users will be skipped")
         else:
             self.skip("create_desktop_pool", "Desktop pool placement could not be resolved (see Auth & discovery)")
         if self.farm_placement:
@@ -805,7 +822,10 @@ class Lifecycle:
             self.skip(["assign_machine_users", "machine_action (enter_maintenance)", "machine_action (exit_maintenance)"],
                       f"No AVAILABLE machine: {self.machine_error}")
             return
-        if self.user_id:
+        if self.pool_floating:
+            self.skip("assign_machine_users", "Horizon rejected the DEDICATED pool; the FLOATING fallback "
+                      "has no user assignment")
+        elif self.user_id:
             async with self.step("assign_machine_users"):
                 mid, u = self.machine["id"], self.user_id
                 for action, present in (("assign", True), ("unassign", False)):
@@ -974,8 +994,13 @@ class Lifecycle:
                     got = await self.s.call("get_session", {"session_id": sid},
                                             label=f"get_session ({ses['session_type'].lower()})")
                     self.expect(got.get("id") == sid, "get_session", "wrong session returned")
-                    await self.s.call("diagnose_session", {"session_id": sid},
-                                      label=f"diagnose_session ({ses['session_type'].lower()})")
+                    diag = await self.s.call("diagnose_session", {"session_id": sid},
+                                             label=f"diagnose_session ({ses['session_type'].lower()})")
+                    # Each section reports its own failure as {"error": ...}. All of them failing
+                    # means the session couldn't be found at all (the bug the first live run hit).
+                    failed = [k for k, v in (diag or {}).items() if isinstance(v, dict) and "error" in v]
+                    self.expect(len(failed) < len(diag or {}), "diagnose_session",
+                                f"every section failed: {diag.get(failed[0]) if failed else ''}")
         pid = primary["id"]
         async with self.step("get_remote_assistance_ticket"):
             t = await self.s.call("get_remote_assistance_ticket", {"session_id": pid})
@@ -1122,6 +1147,8 @@ class Lifecycle:
                 item = self.created.get(kind) or await self.find(kind, name)
                 if item:
                     await self.delete(kind, item, "teardown")
+                else:
+                    self.skip(_KINDS[kind][2], f"Nothing to delete: {name} was never created")
         async with self.step("verify nothing is left"):
             for kind in ("app", "pool", "farm"):
                 ours = [x for x in await self.find_prefixed(kind) if x["name"].endswith(f"-{cfg.tag}")]

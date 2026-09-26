@@ -606,7 +606,16 @@ def register(mcp: FastMCP) -> None:
             "get_application_pool, modify the relevant fields, and pass the result here.",
         ],
     ) -> dict:
-        """Update an existing application pool's configuration."""
+        """Update an existing application pool's configuration.
+
+        Horizon returns supported_file_types_data with both its auto-discovered file_types and
+        enable_auto_update_file_types=true, then rejects that combination on update ("file_types
+        cannot be set when enable_auto_update_file_types is enabled", verified on 2606). So when
+        auto-update is on, file_types is dropped here: Horizon manages that list itself.
+        """
+        file_types = spec.get("supported_file_types_data")
+        if isinstance(file_types, dict) and file_types.get("enable_auto_update_file_types") and "file_types" in file_types:
+            spec = {**spec, "supported_file_types_data": {k: v for k, v in file_types.items() if k != "file_types"}}
         result = await api_put(f"/inventory/v1/application-pools/{seg(pool_id)}", spec)
         return result or {"success": True, "pool_id": pool_id}
 

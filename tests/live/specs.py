@@ -128,8 +128,10 @@ def farm_spec(p: Placement, name: str, naming_pattern: str, description: str) ->
     }
 
 
-def desktop_pool_spec(p: Placement, name: str, naming_pattern: str, description: str) -> dict:
-    """AUTOMATED instant-clone DEDICATED pool with exactly one machine, provisioned up front."""
+def desktop_pool_spec(p: Placement, name: str, naming_pattern: str, description: str,
+                      *, dedicated: bool = True) -> dict:
+    """AUTOMATED instant-clone pool with exactly one machine. DEDICATED (so assign_machine_users
+    can be tested) by default; dedicated=False gives the FLOATING shape that was verified live."""
     customization: dict = {"customization_type": "CLONE_PREP", "instant_clone_domain_account_id": p.ic_domain_account_id}
     if p.ad_container_rdn:
         customization["ad_container_rdn"] = p.ad_container_rdn
@@ -154,4 +156,18 @@ def desktop_pool_spec(p: Placement, name: str, naming_pattern: str, description:
             "number_of_spare_machines": 1,
             "provisioning_time": "UP_FRONT",
         },
+    } if dedicated else {
+        "name": name,
+        "display_name": name,
+        "description": description,
+        "type": "AUTOMATED",
+        "source": "INSTANT_CLONE",
+        "user_assignment": "FLOATING",
+        "naming_method": "PATTERN",
+        "access_group_id": p.access_group_id,
+        "vcenter_id": p.vcenter_id,
+        "provisioning_settings": _provisioning(p),
+        "storage_settings": {"datastores": [{"datastore_id": p.datastore_id}]},
+        "customization_settings": customization,
+        "pattern_naming_settings": {"naming_pattern": naming_pattern, "max_number_of_machines": 1},
     }

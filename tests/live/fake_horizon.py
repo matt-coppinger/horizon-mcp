@@ -44,6 +44,10 @@ def _id(kind: str) -> str:
     return f"{kind}-{uuid.uuid4().hex[:12]}"
 
 
+def _internal(session_id: str) -> str:
+    return f"internal-{session_id}"
+
+
 def _pub(obj: dict) -> dict:
     return {k: v for k, v in obj.items() if not k.startswith("_")}
 
@@ -150,7 +154,11 @@ class FakeHorizon:
                           "executable_path": body.get("executable_path", r"C:\Windows\System32\notepad.exe"),
                           "enabled": True, "enable_pre_launch": False, "enable_client_restrictions": False,
                           "multi_session_mode": "DISABLED", "description": "", "publisher": "", "version": "",
-                          "icon_ids": []}
+                          "icon_ids": [],
+                          # Real 2606: auto-discovered file types come back alongside auto-update=on
+                          "supported_file_types_data": {"file_types": [{"type": ".txt", "description": "Text"}],
+                                                        "enable_auto_update_file_types": True,
+                                                        "enable_auto_update_other_file_types": True}}
         return aid
 
     # ── helpers ──
@@ -356,6 +364,9 @@ class FakeHorizon:
             # sessions
             ("GET", r"/inventory/v1/sessions", self._list_sessions),
             ("GET", r"/inventory/v1/sessions/([^/]+)", lambda p, b, i: _pub(self._get(self.sessions, i))),
+            # v3+ also carries internal_session_id — a different value, the one help desk needs
+            ("GET", r"/inventory/v3/sessions/([^/]+)",
+             lambda p, b, i: {**_pub(self._get(self.sessions, i)), "internal_session_id": _internal(i)}),
             ("POST", r"/inventory/v1/sessions/action/([a-z-]+)", self._session_action),
             # entitlements
             ("GET", r"/entitlements/v1/(desktop|application)-pools", self._list_ent),
@@ -369,8 +380,8 @@ class FakeHorizon:
             ("GET", r"/helpdesk/v2/performance/historical-data", lambda p, b: self._diag(p, {"samples": []})),
             ("GET", r"/helpdesk/v2/performance/process", lambda p, b: self._diag(p, [])),
             ("GET", r"/helpdesk/v2/performance/remote-application",
-             lambda p, b: self._diag(p, self.sessions.get(p.get("internal_session_id"), {}).get("_apps", []))),
-            ("GET", r"/helpdesk/v2/remote-assistant-ticket", lambda p, b: self._diag(p, {"ticket": FAKE_TICKET})),
+             lambda p, b: self._diag(p, self._by_internal(p).get("_apps", []))),
+            ("GET", r"/helpdesk/v1/remote-assistant-ticket", self._ticket),
             ("POST", r"/helpdesk/v1/performance/remote-application/action/end-remote-application", self._end_app),
         )
 
@@ -523,7 +534,14 @@ class FakeHorizon:
 
     def _update_app(self, p, spec, i):
         self._only(spec, APP_POOL_UPDATE_FIELDS, "ApplicationPoolUpdateSpec")
-        self._get(self.apps, i).update(spec)
+        ft = spec.get("supported_file_types_data") or {}
+        if ft.get("enable_auto_update_file_types") and "file_types" in ft:  # real 2606 behaviour
+            raise Reject(400, "file_types cannot be set when enable_auto_update_file_types is enabled.",
+                         "inventory.application-pool.auto-update.file_types.enabled.error")
+        app = self._get(self.apps, i)
+        if ft and "file_types" not in ft:  # assumed: Horizon keeps the auto-managed list it discovered
+            spec = {**spec, "supported_file_types_data": {**ft, "file_types": app["supported_file_types_data"]["file_types"]}}
+        app.update(spec)
 
     def _delete_app(self, p, b, i):
         app = self._get(self.apps, i)
@@ -552,10 +570,21 @@ class FakeHorizon:
                     self.machines[mid]["state"], self.machines[mid]["_next"] = "IN_PROGRESS", ["AVAILABLE"]
         return _bulk(ids)
 
+    def _by_internal(self, p) -> dict:
+        # Real 2606: these endpoints only know the internal id; the session id gets a 404.
+        ses = next((s for sid, s in self.sessions.items() if _internal(sid) == p.get("internal_session_id")), None)
+        if ses is None:
+            raise Reject(404, "Session with requested id was not found.", "helpdesk.session.find.error")
+        return ses
+
     def _diag(self, p, value):
-        if p.get("internal_session_id") not in self.sessions:
-            raise Reject(404, "session not found")
+        self._by_internal(p)
         return value
+
+    def _ticket(self, p, b):
+        if p.get("session_id") not in self.sessions:
+            raise Reject(404, "Session with requested id was not found.", "helpdesk.session.find.error")
+        return {"ticket": FAKE_TICKET}
 
     def _end_app(self, p, b):
         ses = self._get(self.sessions, p.get("session_id", ""))
