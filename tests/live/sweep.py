@@ -34,11 +34,12 @@ async def run_sweep(r: Runner) -> None:
     login = await r.call("horizon_login", credentials())
     if login is None:
         raise RuntimeError("horizon_login failed, so the sweep stopped — see the horizon_login check")
-    refresh = (login or {}).get("refresh_token", "") if isinstance(login, dict) else ""
-    if refresh:
-        refreshed = await r.call("horizon_refresh_token", {"refresh_token": refresh})
-        if isinstance(refreshed, dict) and refreshed.get("refresh_token"):
-            refresh = refreshed["refresh_token"]
+    # The server keeps the refresh token itself and only returns hints (unless
+    # HORIZON_EXPOSE_TOKENS=true), so refresh/logout are called without one.
+    login = login if isinstance(login, dict) else {}
+    has_refresh = bool(login.get("refresh_token") or login.get("refresh_token_hint"))
+    if has_refresh:
+        await r.call("horizon_refresh_token", {})
     else:
         r.skip("horizon_refresh_token", "Login returned no refresh token")
 
@@ -49,7 +50,10 @@ async def run_sweep(r: Runner) -> None:
     else:
         r.skip("get_connection_server", "No connection server returned")
     for t in ("list_virtual_centers", "get_environment_properties", "get_settings", "get_global_policies",
-              "list_licenses", "get_event_database", "list_ic_domain_accounts", "list_gateways", "get_api_coverage"):
+              "list_licenses"):
+        await r.call(t)
+    event_db = await r.call("get_event_database")
+    for t in ("list_ic_domain_accounts", "list_gateways", "get_api_coverage"):
         await r.call(t)
     stream = first(await r.call("list_image_management", {"resource": "streams"},
                                 label="list_image_management (streams)"))
@@ -67,7 +71,10 @@ async def run_sweep(r: Runner) -> None:
     else:
         r.skip("get_connection_server_health", "No connection server returned")
     await r.call("get_metrics")
-    await r.call("list_audit_events", {"size": 25})
+    if isinstance(event_db, dict) and event_db.get("event_database_configured") is False:
+        r.skip("list_audit_events", "No event database is configured (Horizon answers 409)")
+    else:
+        await r.call("list_audit_events", {"size": 25})
 
     r.section("vCenter discovery")
     vc = pick(await r.call("list_virtual_centers", label="list_virtual_centers (for chaining)"), "HZ_VCENTER")
@@ -158,8 +165,8 @@ async def run_sweep(r: Runner) -> None:
             r.skip(t, "No active user sessions")
 
     r.section("Auth")
-    if refresh:
-        await r.call("horizon_logout", {"refresh_token": refresh})
+    if has_refresh:
+        await r.call("horizon_logout", {})
     else:
         r.skip("horizon_logout", "No refresh token to log out with")
 
