@@ -31,23 +31,24 @@ OPT_IN = {
 _CSS = """
 :root{--bg:#f7f7f5;--card:#fff;--fg:#1c1c1a;--mut:#6b6b66;--line:#e4e4df;--code:#f1f1ed;
 --pass:#1f7a4d;--pass-bg:#e3f3ea;--empty:#5b6b7a;--empty-bg:#e8edf2;--warn:#8a5a00;--warn-bg:#fbefd6;
---fail:#b3261e;--fail-bg:#fbe4e2;--skip:#6b6b66;--skip-bg:#ececE8}
+--fail:#b3261e;--fail-bg:#fbe4e2;--skip:#6b6b66;--skip-bg:#ececE8;--na:#5a4a8a;--na-bg:#ebe6f6}
 @media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1d1d1b;--fg:#ececE8;--mut:#9a9a94;--line:#2e2e2b;
 --code:#262624;--pass:#6fd19c;--pass-bg:#173626;--empty:#a9b8c6;--empty-bg:#232c34;--warn:#f0c46a;--warn-bg:#3a2e12;
---fail:#ff8a80;--fail-bg:#3d1b18;--skip:#9a9a94;--skip-bg:#262624}}
+--fail:#ff8a80;--fail-bg:#3d1b18;--skip:#9a9a94;--skip-bg:#262624;--na:#c3b4f0;--na-bg:#2a2340}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,system-ui,sans-serif}
 main{max-width:1100px;margin:0 auto;padding:32px 16px 64px}h1{margin:0 0 4px;font-size:24px}
 .meta{color:var(--mut);margin-bottom:24px}h2{font-size:16px;margin:32px 0 8px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:8px}
 .tile{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:12px;text-align:left;cursor:pointer;color:inherit;font:inherit}
 .tile b{display:block;font-size:26px}.tile span{color:var(--mut)}.tile.active{outline:2px solid var(--fg)}
-.tile.pass b{color:var(--pass)}.tile.empty b{color:var(--empty)}.tile.warn b{color:var(--warn)}.tile.fail b{color:var(--fail)}.tile.skip b{color:var(--skip)}
+.tile.na b,.tile.known b{color:var(--na)}.tile.info b{color:var(--empty)}.tile.pass b{color:var(--pass)}.tile.empty b{color:var(--empty)}.tile.warn b{color:var(--warn)}.tile.fail b{color:var(--fail)}.tile.skip b{color:var(--skip)}
 table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
 th,td{padding:8px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--mut);font-weight:600}
 tr:last-child td{border-bottom:0}.num{text-align:right;white-space:nowrap;color:var(--mut)}.sum{color:var(--mut);word-break:break-word}
 .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;white-space:nowrap}
 .badge.pass{color:var(--pass);background:var(--pass-bg)}.badge.empty{color:var(--empty);background:var(--empty-bg)}
-.badge.warn{color:var(--warn);background:var(--warn-bg)}.badge.fail{color:var(--fail);background:var(--fail-bg)}.badge.skip{color:var(--skip);background:var(--skip-bg)}
+.badge.warn{color:var(--warn);background:var(--warn-bg)}
+.badge.na,.badge.known{color:var(--na);background:var(--na-bg)}.badge.info{color:var(--empty);background:var(--empty-bg)}.badge.fail{color:var(--fail);background:var(--fail-bg)}.badge.skip{color:var(--skip);background:var(--skip-bg)}
 summary{cursor:pointer}code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
 pre{background:var(--code);padding:10px;border-radius:6px;overflow:auto;max-height:420px;font-size:12px;white-space:pre-wrap;word-break:break-word}
 h4{margin:10px 0 4px;font-size:12px;color:var(--mut)}td:nth-child(2){max-width:520px}
@@ -76,10 +77,25 @@ def _detail(row: dict) -> str:
     return "".join(parts)
 
 
+# Row statuses beyond the sweep's: NA = Horizon cleanly rejected an action that doesn't apply
+# (recorded, not a failure); KNOWN = a documented Horizon quirk; INFO = a tolerated
+# intermediate failure (a retried delete, a 404 meaning "no entitlements yet").
+_EXTRA_STATUSES = ("NA", "KNOWN", "INFO")
+
+
+def _coverage_table(coverage: dict[str, dict]) -> str:
+    trs = "".join(f"<tr data-status='{_esc(v['status'])}'><td><span class='badge {_esc(v['status'].lower())}'>"
+                  f"{_esc(v['status'])}</span></td><td><code>{_esc(t)}</code></td>"
+                  f"<td class='sum'>{_esc(v.get('detail', ''))}</td></tr>" for t, v in sorted(coverage.items()))
+    return (f"<section><h2>Tool coverage ({len(coverage)})</h2><table><thead><tr><th>Status</th><th>Tool</th>"
+            f"<th>How / why</th></tr></thead><tbody>{trs}</tbody></table></section>")
+
+
 def render(rows: list[dict], tools: list[str], prompts: list[dict], *, started: str, duration: float,
-           outcomes: dict[str, int]) -> str:
+           outcomes: dict[str, int], coverage: dict[str, dict] | None = None) -> str:
     called = {r["tool"].split(" (")[0] for r in rows if r["status"] != "SKIP"}
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in ("PASS", "EMPTY", "WARN", "FAIL", "SKIP")}
+    counts.update({s: n for s in _EXTRA_STATUSES if (n := sum(1 for r in rows if r["status"] == s))})
     not_run = [(t, NEVER_CALLED.get(t) or OPT_IN.get(t) or "Not called — dependency missing (see skips)")
                for t in sorted(tools) if t not in called]
     groups = list(dict.fromkeys(r["group"] for r in rows))
@@ -113,6 +129,7 @@ def render(rows: list[dict], tools: list[str], prompts: list[dict], *, started: 
 · via MCP stdio · secrets redacted</div>
 <div class="tiles">{tiles}</div>
 <div class="meta">Click a tile to filter. Click a tool name to see its arguments and response.</div>
+{_coverage_table(coverage) if coverage else ''}
 {''.join(sections)}
 <section><h2>Confirmation prompts ({len(prompts)})</h2><table><thead><tr><th>Answer</th><th>Prompt</th></tr></thead>
 <tbody>{pr}</tbody></table></section>

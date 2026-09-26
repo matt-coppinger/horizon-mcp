@@ -535,6 +535,59 @@ HZ_LIVE_WRITES=1 HZ_LIVE_DESTRUCTIVE=1 HZ_BASE_VM=<base-vm> HZ_SNAPSHOT=<agent-s
 
 Add `-s` to watch each tool call and confirmation prompt as it happens. `-m "not live"` deselects the suite entirely.
 
+### End-to-end lifecycle test
+
+> ⚠️ **Lab only, never production.** This test provisions VMs, deletes pools and farms, restarts machines, changes entitlements and (optionally) logs off a real user session.
+
+`tests/live/test_lifecycle.py` exercises **every tool the server registers** against resources it creates itself, then deletes them. One command does the whole run:
+
+1. **Read-only sweep** — the `test_read_only.py` checks, in their own server process.
+2. **Auth & discovery** — `horizon_login` (checks only token hints come back), `get_api_coverage`, the vCenter/AD lookups for placement, `HZ_TEST_GROUP` and `HZ_TEST_USER`.
+3. **Cleanup** — deletes leftovers from earlier runs: application pools first, then desktop pools and farms, polling until each is gone.
+4. **Provision** — a desktop pool, an RDS farm and an application pool (see footprint below), waiting for the machine and the RDS server to be `AVAILABLE` and failing fast on a provisioning error.
+5. **Reads** of the new items, then **desktop pool** updates (rename + restore; disable/enable; disable/enable provisioning), **entitlements** (desktop add → replace → remove, application add → remove, each verified), **machine admin** (assign/unassign `HZ_TEST_USER`, maintenance mode), **farm & app pool** (no-op farm update, disable/enable, app rename + restore) and **config** (no-op global policies and general settings round trips, one Connection Server backup).
+6. **User sessions** (optional, below), then **machine power actions**: restart, reset, recover, rebuild, archive, shutdown — each waits for `AVAILABLE` first. recover / rebuild / archive may not apply to an instant clone; a clean Horizon rejection is recorded as **NA** with its error, not a failure.
+7. **Teardown** (always, in a `finally`) — deletes the app pool, desktop pool and farm, polls until they're gone, and prints `MANUAL CLEANUP MAY BE NEEDED: …` if anything is left.
+8. **Refresh & logout** — `horizon_refresh_token`, a call with the new token, `horizon_logout`, and a check that calls are refused afterwards.
+
+**Footprint:** instant clones only — one `AUTOMATED` / `INSTANT_CLONE` / `DEDICATED` desktop pool with a single machine provisioned up front, one AUTOMATED farm with a single RDS server, and one application pool (`HZ_TEST_APP_PATH`) on that farm.
+
+**Cleanup is prefix-only.** Everything the run creates is named `<prefix>vdi-<tag>`, `<prefix>farm-<tag>` and `<prefix>app-<tag>` (`HZ_E2E_PREFIX`, default `mcp-e2e-`; the test refuses a prefix shorter than 5 characters or with anything but letters, digits, `-` and `_`). The cleanup phase deletes only application pools, desktop pools and farms whose name **starts with** that prefix, and nothing else. The confirmation handler approves only prompts that name the ID of such an item, or of a machine or session inside one (plus the settings no-op round trips, which say that nothing changes); everything else is cancelled and fails the test.
+
+**Coverage:** at the end every registered tool gets a verdict — PASS, FAIL, SKIP (with a reason), NA (Horizon cleanly rejected an action that doesn't apply), or KNOWN (a documented quirk, e.g. `update_settings` general rejecting its own `restricted_client_data`). The test fails if any tool failed or was neither called nor skipped with a reason, if a prompt was unexpected, or if anything was left behind. The table is printed at the end and is the first section of the HTML report (`HZ_LIVE_REPORT`). The lab may have no event database (`list_audit_events` → SKIP) or no image streams (versions/tags → SKIP).
+
+**User sessions.** REST can't start a session, so with `HZ_E2E_WAIT_FOR_SESSION=1` the test entitles `HZ_TEST_USER` to the pool and the app, prints which ones to open, and waits (`HZ_E2E_SESSION_TIMEOUT`, default 900s) for the sessions to appear. Open **both** the desktop and the app: the desktop session gets `get_session`, `diagnose_session`, `get_remote_assistance_ticket` (redacted), `send_message_to_sessions`, `disconnect_sessions` and `reset_or_restart_sessions` (restart); the app session gets `end_remote_application` (on an app found by `diagnose_session`) and `logoff_sessions`. With one session, `reset_or_restart_sessions` is skipped with a reason. Without the flag, the session tools are skipped with the reason "needs a real user session".
+
+**Duration:** roughly 20–60 minutes, dominated by instant-clone provisioning (twice: the pool and the farm) and the machine restart/reset waits; add the time you take to connect when waiting for a session.
+
+| Variable | Purpose |
+|---|---|
+| `HZ_LIVE_E2E=1` | **Required** — enables the test (plus the four required `HZ_*` connection variables) |
+| `HZ_POOL_BASE_VM`, `HZ_POOL_SNAPSHOT` | **Required** — desktop pool base VM and snapshot (name or ID). Use the snapshot taken **after** the Horizon Agent was installed — the wrong one fails with `AGENT_CUSTOMIZATION_FAULT` |
+| `HZ_FARM_BASE_VM`, `HZ_FARM_SNAPSHOT` | **Required** — RDS farm base VM and snapshot; falls back to `HZ_BASE_VM` / `HZ_SNAPSHOT` when neither is set |
+| `HZ_TEST_GROUP` | **Required** — AD group (name or SID) for the entitlement steps |
+| `HZ_TEST_USER` | **Required** — AD user (login name, `DOMAIN\user`, `user@domain` or SID) to assign, entitle and (optionally) connect as |
+| `HZ_E2E_PREFIX` | Name prefix for everything created and the only thing cleanup deletes (default `mcp-e2e-`) |
+| `HZ_E2E_WAIT_FOR_SESSION=1` | Wait for you to connect as `HZ_TEST_USER`, then test the session tools |
+| `HZ_E2E_SESSION_TIMEOUT` | Seconds to wait for a session (default `900`) |
+| `HZ_E2E_SKIP_BACKUP=1` | Don't trigger a Connection Server backup |
+| `HZ_E2E_POLL_INTERVAL` | Seconds between state polls (default `15`) |
+| `HZ_LIVE_PROVISION_TIMEOUT` | Seconds to wait for each provisioning, power action and delete (default `1800`) |
+| `HZ_TEST_APP_PATH`, `HZ_VCENTER`, `HZ_DATACENTER`, `HZ_CLUSTER`, `HZ_RESOURCE_POOL`, `HZ_VM_FOLDER`, `HZ_DATASTORE`, `HZ_ACCESS_GROUP`, `HZ_IC_DOMAIN_ACCOUNT`, `HZ_AD_CONTAINER`, `HZ_LIVE_REPORT` | As above (shared by the pool and the farm) |
+
+```bash
+export HZ_BASE_URL=https://<connection-server> HZ_USERNAME=<admin-user> HZ_DOMAIN=<domain> HZ_VERIFY_SSL=false
+read -rs HZ_PASSWORD && export HZ_PASSWORD
+HZ_LIVE_E2E=1 \
+  HZ_POOL_BASE_VM=<desktop-base-vm> HZ_POOL_SNAPSHOT=<desktop-agent-snapshot> \
+  HZ_FARM_BASE_VM=<rdsh-base-vm> HZ_FARM_SNAPSHOT=<rdsh-agent-snapshot> \
+  HZ_TEST_GROUP=<ad-group> HZ_TEST_USER=<ad-user> \
+  HZ_E2E_WAIT_FOR_SESSION=1 HZ_LIVE_REPORT=.live-reports/e2e.html \
+  uv run pytest tests/live/test_lifecycle.py -v -rs
+```
+
+The test streams its progress (and the "connect now" instructions) even without `-s`. To see every phase and tool call without a lab, run the dry run against the offline fake Horizon in `tests/live/fake_horizon.py`: `uv run python -m tests.live.lifecycle --plan` (add `--no-session` to plan without the session step). The same dry run runs in the unit tests (`tests/test_lifecycle_plan.py`), so a new tool the lifecycle doesn't cover fails CI.
+
 ## Releases
 
 Versions follow [Semantic Versioning](https://semver.org/) and are tagged `vX.Y.Z` on `main`. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release, including breaking changes.
