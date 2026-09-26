@@ -1,10 +1,15 @@
-"""Tests for client.py: _parse_error, _reject_traversal, seg, get_client env validation, reset_client."""
+"""Tests for client.py: _parse_error, _reject_traversal, seg, get_client env validation, reset_client,
+automatic token refresh on 401."""
+import asyncio
 import os
+import subprocess
+import sys
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
+from horizon_mcp import client as client_mod
 from horizon_mcp.client import (
     _parse_error,
     _reject_traversal,
@@ -269,3 +274,164 @@ async def test_reset_client_forces_new_instance():
         await reset_client()
         client2 = await get_client()
     assert client1 is not client2
+
+
+# ── automatic token refresh on 401 ─────────────────────────────────────────────
+
+def _resp(status_code, json_data=None):
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = status_code
+    resp.is_success = status_code < 400
+    resp.content = b"{}" if json_data is not None else b""
+    resp.json = MagicMock(return_value=json_data)
+    resp.text = str(json_data)
+    return resp
+
+
+def _refresh_endpoint(json_data, status_code=200, delay=0.0):
+    """Mock httpx.AsyncClient serving POST /rest/refresh; returns (class, instance)."""
+    async def post(url, json=None, **kwargs):
+        await asyncio.sleep(delay)
+        return _resp(status_code, json_data)
+
+    http = AsyncMock()
+    http.post = AsyncMock(side_effect=post)
+    http.__aenter__ = AsyncMock(return_value=http)
+    http.__aexit__ = AsyncMock(return_value=None)
+    return MagicMock(return_value=http), http
+
+
+def _horizon(monkeypatch, valid_token="new-token"):
+    """Mock shared client that only accepts valid_token (the env token at send time)."""
+    async def request(method, path, **kwargs):
+        sent_with = os.environ.get("HORIZON_ACCESS_TOKEN")
+        await asyncio.sleep(0.01)  # let concurrent callers all send before any refresh lands
+        return _resp(200, {"ok": True}) if sent_with == valid_token else _resp(401, {"error_message": "expired"})
+
+    client = MagicMock()
+    client.request = AsyncMock(side_effect=request)
+    monkeypatch.setattr("horizon_mcp.client.get_client", AsyncMock(return_value=client))
+    return client
+
+
+@pytest.fixture
+def expired_session(monkeypatch):
+    monkeypatch.setenv("HORIZON_ACCESS_TOKEN", "old-token")
+    monkeypatch.setenv("HORIZON_BASE_URL", "https://horizon.test.example.com")
+
+
+async def test_401_refreshes_token_and_retries_once(monkeypatch, expired_session):
+    client_mod.set_refresh_token("stored-refresh")
+    horizon = _horizon(monkeypatch)
+    mock_class, http = _refresh_endpoint({"access_token": "new-token"})
+
+    with patch("horizon_mcp.client.httpx.AsyncClient", mock_class):
+        result = await api_get("/inventory/v1/desktop-pools")
+
+    assert result == {"ok": True}
+    assert horizon.request.await_count == 2
+    http.post.assert_awaited_once()
+    assert http.post.call_args.args[0] == "https://horizon.test.example.com/rest/refresh"
+    assert http.post.call_args.kwargs["json"] == {"refresh_token": "stored-refresh"}
+    assert os.environ["HORIZON_ACCESS_TOKEN"] == "new-token"
+
+
+async def test_401_refresh_keeps_rotated_refresh_token(monkeypatch, expired_session):
+    client_mod.set_refresh_token("stored-refresh")
+    _horizon(monkeypatch)
+    mock_class, _ = _refresh_endpoint({"access_token": "new-token", "refresh_token": "rotated-refresh"})
+
+    with patch("horizon_mcp.client.httpx.AsyncClient", mock_class):
+        await api_post("/inventory/v1/desktop-pools/p1/action/enable")
+
+    assert client_mod.get_refresh_token() == "rotated-refresh"
+
+
+async def test_concurrent_401s_trigger_a_single_refresh(monkeypatch, expired_session):
+    client_mod.set_refresh_token("stored-refresh")
+    horizon = _horizon(monkeypatch)
+    mock_class, http = _refresh_endpoint({"access_token": "new-token"}, delay=0.02)
+
+    with patch("horizon_mcp.client.httpx.AsyncClient", mock_class):
+        results = await asyncio.gather(*(api_get(f"/inventory/v1/machines/m{i}") for i in range(5)))
+
+    assert results == [{"ok": True}] * 5
+    http.post.assert_awaited_once()
+    assert horizon.request.await_count == 10
+
+
+async def test_401_with_failed_refresh_raises_clear_error_without_looping(monkeypatch, expired_session):
+    client_mod.set_refresh_token("stale-refresh")
+    horizon = _horizon(monkeypatch)
+    mock_class, http = _refresh_endpoint({"error_message": "refresh token expired"}, status_code=401)
+
+    with patch("horizon_mcp.client.httpx.AsyncClient", mock_class):
+        with pytest.raises(ValueError, match="couldn't be refreshed automatically.*horizon_login"):
+            await api_get("/inventory/v1/desktop-pools")
+        # The rejected refresh token is dropped, so the next call fails fast.
+        with pytest.raises(ValueError, match="no refresh token.*horizon_login"):
+            await api_get("/inventory/v1/desktop-pools")
+
+    http.post.assert_awaited_once()
+    assert horizon.request.await_count == 2
+    assert client_mod.get_refresh_token() is None
+
+
+async def test_refresh_network_error_keeps_refresh_token(monkeypatch, expired_session):
+    client_mod.set_refresh_token("stored-refresh")
+    _horizon(monkeypatch)
+    mock_class, http = _refresh_endpoint({})
+    http.post.side_effect = httpx.ConnectError("unreachable")
+
+    with patch("horizon_mcp.client.httpx.AsyncClient", mock_class):
+        with pytest.raises(ValueError, match="couldn't be refreshed automatically.*horizon_login"):
+            await api_get("/inventory/v1/desktop-pools")
+
+    assert client_mod.get_refresh_token() == "stored-refresh"
+
+
+async def test_401_after_refresh_is_not_retried_again(monkeypatch, expired_session):
+    client_mod.set_refresh_token("stored-refresh")
+    horizon = _horizon(monkeypatch, valid_token="never-valid")
+    mock_class, http = _refresh_endpoint({"access_token": "new-token"})
+
+    with patch("horizon_mcp.client.httpx.AsyncClient", mock_class):
+        with pytest.raises(ValueError, match=r"failed \(401\).*Still rejected.*horizon_login"):
+            await api_get("/inventory/v1/desktop-pools")
+
+    http.post.assert_awaited_once()
+    assert horizon.request.await_count == 2
+
+
+async def test_401_without_refresh_token_raises_clear_error(monkeypatch, expired_session):
+    horizon = _horizon(monkeypatch)
+    mock_class, http = _refresh_endpoint({"access_token": "new-token"})
+
+    with patch("horizon_mcp.client.httpx.AsyncClient", mock_class):
+        with pytest.raises(ValueError, match="no refresh token.*horizon_login"):
+            await api_delete("/inventory/v1/desktop-pools/p1")
+
+    http.post.assert_not_called()
+    assert horizon.request.await_count == 1
+
+
+async def test_missing_access_token_is_obtained_from_refresh_token(monkeypatch, expired_session):
+    monkeypatch.delenv("HORIZON_ACCESS_TOKEN")
+    client_mod.set_refresh_token("stored-refresh")
+    horizon = _horizon(monkeypatch)
+    mock_class, http = _refresh_endpoint({"access_token": "new-token"})
+
+    with patch("horizon_mcp.client.httpx.AsyncClient", mock_class):
+        assert await api_get("/inventory/v1/desktop-pools") == {"ok": True}
+
+    http.post.assert_awaited_once()
+    assert horizon.request.await_count == 1
+
+
+def test_refresh_token_is_read_from_env_at_startup():
+    env = {**os.environ, "HORIZON_REFRESH_TOKEN": "env-refresh-token"}
+    out = subprocess.run(
+        [sys.executable, "-c", "from horizon_mcp import client; print(client.get_refresh_token())"],
+        env=env, capture_output=True, text=True, check=True,
+    )
+    assert out.stdout.strip() == "env-refresh-token"

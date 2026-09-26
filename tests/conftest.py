@@ -61,3 +61,9 @@ def confirmations(monkeypatch):
     monkeypatch.setattr("horizon_mcp.tools.inventory._label", fake_label)
     monkeypatch.setattr("horizon_mcp.tools.config._describe_changes", fake_changes)
     return rec
+
+
+@pytest.fixture(autouse=True)
+def no_stored_refresh_token(monkeypatch):
+    """Start every test without a server-side refresh token (it's module state in client.py)."""
+    monkeypatch.setattr("horizon_mcp.client._refresh_token", None)
