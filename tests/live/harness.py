@@ -253,7 +253,7 @@ class Session:
     def record(self, label: str, status: str, summary: str, *, args=None, body=None, ms: int = 0) -> None:
         ROWS.append(dict(group=self.group, tool=label, status=status, args=redact(args),
                          ms=ms, summary=redact(summary), body=redact(body)))
-        print(f"  {status:5} {label:48} {ms or '':>6}  {str(redact(summary))[:70]}")
+        print(f"  {status:5} {label:48} {ms or '':>6}")
 
     def skip(self, label: str, reason: str) -> None:
         self.record(label, "SKIP", reason)
