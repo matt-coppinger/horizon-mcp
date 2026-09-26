@@ -51,6 +51,9 @@ venv = ".venv"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "live: runs against a real Horizon server over MCP stdio; skipped unless HZ_* env vars are set (see README)",
+]
 
 [dependency-groups]
 dev = [
