@@ -6,6 +6,7 @@ from fastmcp import FastMCP
 from ..client import api_get, api_post, api_put, seg
 from ._annotations import ADDITIVE, DESTRUCTIVE_UPDATE, READ_ONLY
 from ._confirm import require_confirmation
+from ._results import bulk_result
 
 
 async def _describe_changes(path: str, spec: dict) -> str:
@@ -207,4 +208,4 @@ def register(mcp: FastMCP) -> None:
         If no server_ids are provided, all Connection Servers are backed up.
         """
         result = await api_post("/config/v1/connection-servers/action/backup", server_ids or [])
-        return result or {"success": True}
+        return bulk_result(result)

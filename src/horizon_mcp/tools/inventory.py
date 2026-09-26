@@ -1,5 +1,6 @@
 """Inventory tools: desktop pools, machines, sessions, farms, application pools."""
 import asyncio
+import json
 import os
 from typing import Annotated, Literal
 
@@ -8,6 +9,7 @@ from fastmcp import FastMCP
 from ..client import api_delete, api_get, api_post, api_put, seg
 from ._annotations import ADDITIVE, DESTRUCTIVE, DESTRUCTIVE_UPDATE, READ_ONLY
 from ._confirm import require_confirmation
+from ._results import bulk_result
 
 _MAX_MACHINE_COUNT = int(os.environ.get("HORIZON_MAX_MACHINE_COUNT", "500"))
 _MAX_BULK_DESTRUCTIVE = int(os.environ.get("HORIZON_MAX_BULK_DESTRUCTIVE", "20"))
@@ -37,6 +39,23 @@ async def _label(path: str, resource_id: str) -> str:
         return resource_id
     name = (info or {}).get("display_name") or (info or {}).get("name")
     return f"{name} ({resource_id})" if name else resource_id
+
+
+async def _created(list_path: str, name: str, kind: str, list_tool: str) -> dict:
+    """Result for a create call. Horizon answers 201 with no body, so look the new item up by name."""
+    try:
+        found = await api_get(list_path, {"filter": json.dumps({"type": "Equals", "name": "name", "value": name})})
+    except Exception:
+        found = None
+    match = next((i for i in found or [] if isinstance(i, dict) and i.get("name") == name), None)
+    if match:
+        return {"success": True, "id": match.get("id"), "name": name}
+    return {
+        "success": True,
+        "id": None,
+        "name": name,
+        "note": f"Horizon accepted the request but returned no ID. Call {list_tool} to find the new {kind}.",
+    }
 
 
 def _ids(ids: list[str], limit: int = 5) -> str:
@@ -131,11 +150,8 @@ def register(mcp: FastMCP) -> None:
                 "HORIZON_MAX_MACHINE_COUNT if this is intentional."
             )
         result = await api_post("/inventory/v1/desktop-pools", spec)
-        if result is None:
-            raise ValueError(
-                "Pool creation returned no response body — the pool may not have been "
-                "created. Check Horizon audit logs before retrying."
-            )
+        if result is None:  # 201 with no body — the documented success response
+            return await _created("/inventory/v13/desktop-pools", spec.get("name", ""), "pool", "list_desktop_pools")
         return result
 
     @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
@@ -215,7 +231,7 @@ def register(mcp: FastMCP) -> None:
                 f"Disable {what} for {len(pool_ids)} desktop pool(s): {_ids(pool_ids)}.", confirm=confirm
             )
         result = await api_post(f"/inventory/v1/desktop-pools/action/{action}", pool_ids)
-        return result or {"success": True, "action": action, "pool_count": len(pool_ids)}
+        return bulk_result(result, action=action, pool_count=len(pool_ids))
 
     # ── Machines ───────────────────────────────────────────────────────────────
 
@@ -318,7 +334,7 @@ def register(mcp: FastMCP) -> None:
         else:
             body = machine_ids
         result = await api_post(path, body)
-        return result or {"success": True, "action": action, "machine_count": len(machine_ids)}
+        return bulk_result(result, action=action, machine_count=len(machine_ids))
 
     @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
     async def assign_machine_users(
@@ -343,7 +359,7 @@ def register(mcp: FastMCP) -> None:
             f"/inventory/v1/machines/{seg(machine_id)}/action/{endpoint}",
             {"user_ids": user_ids},
         )
-        return result or {"success": True, "action": action, "machine_id": machine_id}
+        return bulk_result(result, action=action, machine_id=machine_id)
 
     # ── RDS Farms ──────────────────────────────────────────────────────────────
 
@@ -408,11 +424,8 @@ def register(mcp: FastMCP) -> None:
                 "HORIZON_MAX_MACHINE_COUNT if this is intentional."
             )
         result = await api_post("/inventory/v1/farms", spec)
-        if result is None:
-            raise ValueError(
-                "Farm creation returned no response body — the farm may not have been "
-                "created. Check Horizon audit logs before retrying."
-            )
+        if result is None:  # 201 with no body — the documented success response
+            return await _created("/inventory/v10/farms", spec.get("name", ""), "farm", "list_rdsh_farms")
         return result
 
     @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
@@ -561,7 +574,9 @@ def register(mcp: FastMCP) -> None:
         if version:
             body["version"] = version
         result = await api_post("/inventory/v1/application-pools", body)
-        return result or {"success": True}
+        if result is None:  # 201 with no body — the documented success response
+            return await _created("/inventory/v1/application-pools", name, "application pool", "list_application_pools")
+        return result
 
     @mcp.tool(annotations=DESTRUCTIVE_UPDATE)
     async def update_application_pool(
@@ -654,7 +669,7 @@ def register(mcp: FastMCP) -> None:
             confirm=confirm,
         )
         result = await api_post("/inventory/v1/sessions/action/disconnect", session_ids)
-        return result or {"success": True, "session_count": len(session_ids)}
+        return bulk_result(result, session_count=len(session_ids))
 
     @mcp.tool(annotations=DESTRUCTIVE)
     async def logoff_sessions(
@@ -686,7 +701,7 @@ def register(mcp: FastMCP) -> None:
             session_ids,
             params={"forced": str(forced).lower()},
         )
-        return result or {"success": True, "session_count": len(session_ids)}
+        return bulk_result(result, session_count=len(session_ids))
 
     @mcp.tool(annotations=DESTRUCTIVE)
     async def reset_or_restart_sessions(
@@ -715,7 +730,7 @@ def register(mcp: FastMCP) -> None:
             confirm=confirm,
         )
         result = await api_post(f"/inventory/v1/sessions/action/{action}", session_ids)
-        return result or {"success": True, "action": action, "session_count": len(session_ids)}
+        return bulk_result(result, action=action, session_count=len(session_ids))
 
     @mcp.tool(annotations=ADDITIVE)
     async def send_message_to_sessions(
@@ -733,4 +748,4 @@ def register(mcp: FastMCP) -> None:
             "message_type": message_type,
         }
         result = await api_post("/inventory/v1/sessions/action/send-message", body)
-        return result or {"success": True, "session_count": len(session_ids)}
+        return bulk_result(result, session_count=len(session_ids))
