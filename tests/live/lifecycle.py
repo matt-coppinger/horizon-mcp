@@ -359,6 +359,12 @@ class Lifecycle:
 
     async def find(self, kind: str, name: str) -> dict | None:
         ok, data, _ = await self.probe(_KINDS[kind][0], {"filter": _eq("name", name), "size": 100})
+        hit = by_name(data, name) if ok else None
+        if hit:
+            return hit
+        # Verified live: filtering farms by name found nothing, even though the farm existed.
+        # So fall back to listing everything and matching the exact name here.
+        ok, data, _ = await self.probe(_KINDS[kind][0], {"size": 1000, "fetch_all": True})
         return by_name(data, name) if ok else None
 
     async def find_prefixed(self, kind: str) -> list[dict]:
@@ -640,7 +646,7 @@ class Lifecycle:
         pool, farm, app = (self.created.get(k) for k in ("pool", "farm", "app"))
         if pool:
             async with self.step("desktop pool reads"):
-                listed = await self.s.call("list_desktop_pools", {"filter": _eq("name", pool["name"])},
+                listed = await self.s.call("list_desktop_pools", {"size": 1000, "fetch_all": True},
                                            label="list_desktop_pools (by name)")
                 self.expect(isinstance(listed, dict) and {"items", "has_more", "next_page"} <= set(listed),
                             "list_desktop_pools", "not a paginated {items, has_more, next_page} result")
@@ -664,7 +670,8 @@ class Lifecycle:
                        "list_sessions (in the pool)"], "The desktop pool was not created")
         if farm:
             async with self.step("farm reads"):
-                listed = await self.s.call("list_rdsh_farms", {"filter": _eq("name", farm["name"])},
+                # Not filtered by name: Horizon 2606 returns no farms for a name filter (verified live).
+                listed = await self.s.call("list_rdsh_farms", {"size": 1000, "fetch_all": True},
                                            label="list_rdsh_farms (by name)")
                 self.expect(by_name(listed, farm["name"]), "list_rdsh_farms", "the new farm is not listed")
                 got = await self.s.call("get_rdsh_farm", {"farm_id": farm["id"]})
@@ -678,7 +685,7 @@ class Lifecycle:
                       "The farm was not created")
         if app:
             async with self.step("application pool reads"):
-                listed = await self.s.call("list_application_pools", {"filter": _eq("name", app["name"])},
+                listed = await self.s.call("list_application_pools", {"size": 1000, "fetch_all": True},
                                            label="list_application_pools (by name)")
                 self.expect(by_name(listed, app["name"]), "list_application_pools", "the new app pool is not listed")
                 got = await self.s.call("get_application_pool", {"pool_id": app["id"]})

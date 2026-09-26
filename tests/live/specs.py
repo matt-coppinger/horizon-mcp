@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from .harness import LiveToolError, Session, pick
+from .harness import LiveToolError, Session, items, pick
 from .sweep import find_host_or_cluster
 
 # Properties ApplicationPoolUpdateSpec accepts (Horizon 2606 swagger). get_application_pool
@@ -70,12 +70,29 @@ async def resolve_placement(s: Session, *, base_vm_env: str, snapshot_env: str) 
                "an access group")
     ic = _need(pick(await s.call("list_ic_domain_accounts"), "HZ_IC_DOMAIN_ACCOUNT"),
                "an instant clone domain account")
+    ad_container_rdn = await resolve_ad_container(s)
     return Placement(
         vcenter_id=vc["id"], datacenter_id=dc["id"], host_or_cluster_id=hc["id"], resource_pool_id=rp["id"],
         vm_folder_id=folder["id"], datastore_id=ds["id"], parent_vm_id=vm["id"], base_snapshot_id=snap["id"],
         access_group_id=ag["id"], ic_domain_account_id=ic["id"],
-        ad_container_rdn=os.environ.get("HZ_AD_CONTAINER") or None,
+        ad_container_rdn=ad_container_rdn,
     )
+
+
+async def resolve_ad_container(s: Session) -> str:
+    """AD container (OU) RDN for new machines. Horizon requires one for instant-clone
+    desktop pools (verified live: "ad_container_rdn must be set for instant clone desktop
+    pools"). HZ_AD_CONTAINER wins; otherwise CN=Computers, otherwise the first container."""
+    domain = _need(pick(await s.call("list_ad_domains"), "HZ_AD_DOMAIN"), "an AD domain")
+    containers = [c for c in items(await s.call("list_ad_containers", {"domain_id": domain["id"]}))
+                  if isinstance(c, dict) and c.get("rdn")]
+    _need(containers or None, f"an AD container in domain {domain.get('dns_name') or domain['id']}")
+    want = os.environ.get("HZ_AD_CONTAINER")
+    if want:
+        match = next((c for c in containers if c["rdn"].lower() == want.lower()), None)
+        return _need(match, f"HZ_AD_CONTAINER {want!r} in that domain")["rdn"]
+    default = next((c for c in containers if c["rdn"].lower() == "cn=computers"), None)
+    return (default or containers[0])["rdn"]
 
 
 def _provisioning(p: Placement) -> dict:

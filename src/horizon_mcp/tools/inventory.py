@@ -44,11 +44,21 @@ async def _label(path: str, resource_id: str) -> str:
 
 async def _created(list_path: str, name: str, kind: str, list_tool: str) -> dict:
     """Result for a create call. Horizon answers 201 with no body, so look the new item up by name."""
+    def _match(found: object) -> dict | None:
+        return next((i for i in found if isinstance(i, dict) and i.get("name") == name), None) \
+            if isinstance(found, list) else None
+
     try:
-        found = await api_get(list_path, {"filter": json.dumps({"type": "Equals", "name": "name", "value": name})})
+        match = _match(await api_get(list_path, {"filter": json.dumps({"type": "Equals", "name": "name", "value": name})}))
     except Exception:
-        found = None
-    match = next((i for i in found or [] if isinstance(i, dict) and i.get("name") == name), None)
+        match = None
+    if match is None:
+        # Verified live: filtering farms by name returned nothing for a farm that existed,
+        # so fall back to an unfiltered list and match the exact name here.
+        try:
+            match = _match(await api_get(list_path, {"size": 1000}))
+        except Exception:
+            match = None
     if match:
         return {"success": True, "id": match.get("id"), "name": name}
     return {

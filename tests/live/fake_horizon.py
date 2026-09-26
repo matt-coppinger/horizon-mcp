@@ -419,6 +419,10 @@ class FakeHorizon:
                       "storage_settings.datastores", "customization_settings.customization_type",
                       "customization_settings.instant_clone_domain_account_id",
                       "pattern_naming_settings.naming_pattern", "pattern_naming_settings.max_number_of_machines")
+        if spec.get("source") == "INSTANT_CLONE" and not spec["customization_settings"].get("ad_container_rdn"):
+            # Real 2606 behaviour, hit on the first live run.
+            raise Reject(400, "ad_container_rdn must be set for instant clone desktop pools.",
+                         "inventory.desktop-pool.ad_container_rdn.instant.clone.unset.error")
         if any(x["name"] == spec["name"] for x in self.pools.values()):
             raise Reject(409, "a pool with that name exists", "fake.duplicate")
         self._add_pool(spec["name"], ready=False, spec=spec)  # 201, no body
@@ -489,6 +493,8 @@ class FakeHorizon:
 
     def _list_farms(self, p, b):
         self._reap(self.farms)
+        if p.get("filter") and json.loads(p["filter"]).get("name") == "name":
+            return []  # real 2606 behaviour, hit on the first live run: a name filter finds no farms
         return self._page(list(self.farms.values()), p)
 
     def _create_farm(self, p, spec):
