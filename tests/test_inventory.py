@@ -1,5 +1,6 @@
 """Tests for inventory tools: machine_action, logoff_sessions, session actions,
 create/update/delete for desktop pools, RDS farms, and application pools."""
+import json
 import pytest
 from unittest.mock import patch, AsyncMock
 
@@ -260,12 +261,34 @@ async def test_create_desktop_pool_returns_api_response(tools):
     assert result == {"id": "pool-123"}
 
 
-async def test_create_desktop_pool_raises_on_none_response(tools):
-    spec = {"name": "TestPool", "type": "AUTOMATED", "source": "INSTANT_CLONE", "user_assignment": "FLOATING"}
+# Horizon answers a successful create with 201 and no body (per the 2606 spec), so the
+# tool looks the new item up by name instead of reporting failure.
 
-    with patch("horizon_mcp.tools.inventory.api_post", return_value=None):
-        with pytest.raises(ValueError, match="no response body"):
-            await tools["create_desktop_pool"](spec=spec)
+async def test_create_desktop_pool_empty_201_looks_up_new_pool(tools):
+    spec = {"name": "TestPool", "type": "AUTOMATED", "source": "INSTANT_CLONE", "user_assignment": "FLOATING"}
+    lookups: list = []
+
+    async def fake_get(path, params=None):
+        lookups.append((path, params))
+        return [{"id": "pool-new", "name": "TestPool"}]
+
+    with patch("horizon_mcp.tools.inventory.api_post", return_value=None), \
+         patch("horizon_mcp.tools.inventory.api_get", side_effect=fake_get):
+        result = await tools["create_desktop_pool"](spec=spec)
+
+    assert result == {"success": True, "id": "pool-new", "name": "TestPool"}
+    path, params = lookups[0]
+    assert path == "/inventory/v13/desktop-pools"
+    assert json.loads(params["filter"]) == {"type": "Equals", "name": "name", "value": "TestPool"}
+
+
+async def test_create_desktop_pool_empty_201_lookup_fails_still_reports_success(tools):
+    spec = {"name": "TestPool", "type": "AUTOMATED", "source": "INSTANT_CLONE", "user_assignment": "FLOATING"}
+    with patch("horizon_mcp.tools.inventory.api_post", return_value=None), \
+         patch("horizon_mcp.tools.inventory.api_get", side_effect=ValueError("503")):
+        result = await tools["create_desktop_pool"](spec=spec)
+    assert result["success"] is True and result["id"] is None
+    assert "list_desktop_pools" in result["note"]
 
 
 async def test_create_desktop_pool_raises_when_max_machine_count_exceeds_ceiling(tools):
@@ -398,12 +421,13 @@ async def test_create_rdsh_farm_returns_api_response(tools):
     assert result == {"id": "farm-456"}
 
 
-async def test_create_rdsh_farm_raises_on_none_response(tools):
+async def test_create_rdsh_farm_empty_201_looks_up_new_farm(tools):
     spec = {"name": "TestFarm", "type": "AUTOMATED", "source": "INSTANT_CLONE"}
-
-    with patch("horizon_mcp.tools.inventory.api_post", return_value=None):
-        with pytest.raises(ValueError, match="no response body"):
-            await tools["create_rdsh_farm"](spec=spec)
+    with patch("horizon_mcp.tools.inventory.api_post", return_value=None), \
+         patch("horizon_mcp.tools.inventory.api_get", return_value=[{"id": "farm-new", "name": "TestFarm"}]) as get:
+        result = await tools["create_rdsh_farm"](spec=spec)
+    assert result == {"success": True, "id": "farm-new", "name": "TestFarm"}
+    assert get.call_args.args[0] == "/inventory/v10/farms"
 
 
 async def test_create_rdsh_farm_raises_when_max_machine_count_exceeds_ceiling(tools):
@@ -556,7 +580,8 @@ async def test_create_application_pool_required_fields_only(tools):
         captured["body"] = body
         return None
 
-    with patch("horizon_mcp.tools.inventory.api_post", side_effect=fake_post):
+    with patch("horizon_mcp.tools.inventory.api_post", side_effect=fake_post), \
+         patch("horizon_mcp.tools.inventory.api_get", return_value=[{"id": "app-new", "name": "MyApp"}]):
         result = await tools["create_application_pool"](
             name="MyApp",
             farm_id="farm-123",
@@ -574,7 +599,7 @@ async def test_create_application_pool_required_fields_only(tools):
     assert "display_name" not in body
     assert "publisher" not in body
     assert "version" not in body
-    assert result == {"success": True}
+    assert result == {"success": True, "id": "app-new", "name": "MyApp"}
 
 
 async def test_create_application_pool_optional_fields_included_when_set(tools):
