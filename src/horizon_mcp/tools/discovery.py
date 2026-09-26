@@ -102,6 +102,13 @@ _COVERAGE: dict = {
             "end_remote_application — force-close a published app in a session",
         ],
     },
+    "pagination": (
+        "list_desktop_pools, list_machines, list_rdsh_farms, list_application_pools, "
+        "list_sessions, search_ad_users_or_groups and list_audit_events take page/size and "
+        "return {items, count, page, size, pages_fetched, has_more, next_page, truncated}. "
+        "If has_more is true, call again with page=next_page or pass fetch_all=true "
+        "(capped at 10 pages / 5000 items; truncated=true when the cap is hit)."
+    ),
     "resources": {
         "description": (
             "Read-only Horizon data exposed as MCP Resources (horizon://<path>). "
