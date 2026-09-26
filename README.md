@@ -436,8 +436,17 @@ These tools, plus the `update_*` tools and `assign_machine_users`, also carry `d
 ## Running Tests
 
 ```bash
-uv run pytest tests/ -v
+uv sync --all-extras --all-groups
+uv run pytest -q          # unit tests
+uv run ruff check src     # lint
+uv run pyright src        # type check
 ```
+
+CI runs all of these on every pull request (tests on Python 3.11–3.13), plus a `pip-audit` scan of the locked dependencies.
+
+## Releases
+
+Versions follow [Semantic Versioning](https://semver.org/) and are tagged `vX.Y.Z` on `main`. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release, including breaking changes.
 
 ## Security Notes
 
