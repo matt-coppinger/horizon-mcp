@@ -6,6 +6,7 @@ from fastmcp import FastMCP
 from ..client import api_delete, api_get, api_post, api_put, seg
 from ._annotations import DESTRUCTIVE, READ_ONLY
 from ._confirm import require_confirmation
+from ._results import bulk_result
 
 
 def register(mcp: FastMCP) -> None:
@@ -90,4 +91,4 @@ def register(mcp: FastMCP) -> None:
             result = await api_put(f"/entitlements/v1/{pool_type}-pools", spec)
         else:
             result = await api_delete(f"/entitlements/v1/{pool_type}-pools", spec)
-        return result or {"success": True, "pool_id": pool_id, "action": action}
+        return bulk_result(result, pool_id=pool_id, action=action)
