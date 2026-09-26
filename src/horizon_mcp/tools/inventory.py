@@ -8,6 +8,7 @@ from fastmcp import FastMCP
 from ..client import api_delete, api_get, api_post, api_put, seg
 from ._annotations import ADDITIVE, DESTRUCTIVE, DESTRUCTIVE_UPDATE, READ_ONLY
 from ._confirm import require_confirmation
+from ._paging import FETCH_ALL_DOC, paginate, paginated
 
 _MAX_MACHINE_COUNT = int(os.environ.get("HORIZON_MAX_MACHINE_COUNT", "500"))
 _MAX_BULK_DESTRUCTIVE = int(os.environ.get("HORIZON_MAX_BULK_DESTRUCTIVE", "20"))
@@ -61,6 +62,7 @@ def register(mcp: FastMCP) -> None:
     # ── Desktop Pools ──────────────────────────────────────────────────────────
 
     @mcp.tool(annotations=READ_ONLY)
+    @paginated
     async def list_desktop_pools(
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
@@ -69,12 +71,13 @@ def register(mcp: FastMCP) -> None:
             'Horizon filter JSON string. Example: {"type":"Contains","name":"name","value":"dev"}'
             " — see Horizon REST API docs for full filter syntax.",
         ] = "",
-    ) -> list:
+        fetch_all: Annotated[bool, FETCH_ALL_DOC] = False,
+    ) -> dict:
         """List all desktop pools (VDI and RDS) in the Horizon environment."""
-        params: dict = {"page": page, "size": size}
+        params: dict = {}
         if filter:
             params["filter"] = filter
-        return await api_get("/inventory/v13/desktop-pools", params) or []
+        return await paginate(api_get, "/inventory/v13/desktop-pools", params, page, size, fetch_all)
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_desktop_pool(
@@ -220,6 +223,7 @@ def register(mcp: FastMCP) -> None:
     # ── Machines ───────────────────────────────────────────────────────────────
 
     @mcp.tool(annotations=READ_ONLY)
+    @paginated
     async def list_machines(
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
@@ -229,20 +233,21 @@ def register(mcp: FastMCP) -> None:
         ] = "",
         sort_by: Annotated[str, "Field name to sort by, e.g. name"] = "",
         order_by: Annotated[str, "Sort direction: ASC or DESC"] = "",
-    ) -> list:
+        fetch_all: Annotated[bool, FETCH_ALL_DOC] = False,
+    ) -> dict:
         """List machines (virtual desktops) in the environment.
 
         To filter by pool, use: filter={"type":"Equals","name":"desktop_pool_id","value":"<id>"}
         To filter by state, use: filter={"type":"Equals","name":"state","value":"AVAILABLE"}
         """
-        params: dict = {"page": page, "size": size}
+        params: dict = {}
         if filter:
             params["filter"] = filter
         if sort_by:
             params["sort_by"] = sort_by
         if order_by:
             params["order_by"] = order_by
-        return await api_get("/inventory/v1/machines", params) or []
+        return await paginate(api_get, "/inventory/v1/machines", params, page, size, fetch_all)
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_machine(
@@ -348,16 +353,18 @@ def register(mcp: FastMCP) -> None:
     # ── RDS Farms ──────────────────────────────────────────────────────────────
 
     @mcp.tool(annotations=READ_ONLY)
+    @paginated
     async def list_rdsh_farms(
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
         filter: Annotated[str, "Horizon filter JSON string"] = "",
-    ) -> list:
+        fetch_all: Annotated[bool, FETCH_ALL_DOC] = False,
+    ) -> dict:
         """List all RDS (Remote Desktop Session Host) farms in the environment."""
-        params: dict = {"page": page, "size": size}
+        params: dict = {}
         if filter:
             params["filter"] = filter
-        return await api_get("/inventory/v10/farms", params) or []
+        return await paginate(api_get, "/inventory/v10/farms", params, page, size, fetch_all)
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_rdsh_farm(
@@ -507,16 +514,18 @@ def register(mcp: FastMCP) -> None:
     # ── Application Pools ──────────────────────────────────────────────────────
 
     @mcp.tool(annotations=READ_ONLY)
+    @paginated
     async def list_application_pools(
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
         filter: Annotated[str, "Horizon filter JSON string"] = "",
-    ) -> list:
+        fetch_all: Annotated[bool, FETCH_ALL_DOC] = False,
+    ) -> dict:
         """List published application pools in the environment."""
-        params: dict = {"page": page, "size": size}
+        params: dict = {}
         if filter:
             params["filter"] = filter
-        return await api_get("/inventory/v1/application-pools", params) or []
+        return await paginate(api_get, "/inventory/v1/application-pools", params, page, size, fetch_all)
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_application_pool(
@@ -601,6 +610,7 @@ def register(mcp: FastMCP) -> None:
     # ── Sessions ───────────────────────────────────────────────────────────────
 
     @mcp.tool(annotations=READ_ONLY)
+    @paginated
     async def list_sessions(
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
@@ -611,20 +621,21 @@ def register(mcp: FastMCP) -> None:
         ] = "",
         sort_by: Annotated[str, "Field to sort by, e.g. user_name, start_time"] = "",
         order_by: Annotated[str, "Sort direction: ASC or DESC"] = "",
-    ) -> list:
+        fetch_all: Annotated[bool, FETCH_ALL_DOC] = False,
+    ) -> dict:
         """List active user sessions in the environment.
 
         Common filter fields: user_name, desktop_pool_id, machine_name, client_name, state.
         Session states: CONNECTED, DISCONNECTED, PENDING.
         """
-        params: dict = {"page": page, "size": size}
+        params: dict = {}
         if filter:
             params["filter"] = filter
         if sort_by:
             params["sort_by"] = sort_by
         if order_by:
             params["order_by"] = order_by
-        return await api_get("/inventory/v1/sessions", params) or []
+        return await paginate(api_get, "/inventory/v1/sessions", params, page, size, fetch_all)
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_session(

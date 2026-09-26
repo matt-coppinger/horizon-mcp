@@ -5,6 +5,7 @@ from fastmcp import FastMCP
 
 from ..client import api_get, seg
 from ._annotations import READ_ONLY
+from ._paging import FETCH_ALL_DOC, paginate, paginated
 
 
 def register(mcp: FastMCP) -> None:
@@ -12,6 +13,7 @@ def register(mcp: FastMCP) -> None:
     # ── Active Directory ───────────────────────────────────────────────────────
 
     @mcp.tool(annotations=READ_ONLY)
+    @paginated
     async def search_ad_users_or_groups(
         filter: Annotated[
             str,
@@ -21,7 +23,8 @@ def register(mcp: FastMCP) -> None:
         ] = "",
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 50,
-    ) -> list:
+        fetch_all: Annotated[bool, FETCH_ALL_DOC] = False,
+    ) -> dict:
         """Search for AD users and groups in the Horizon environment.
 
         Use the returned 'id' field when setting pool entitlements.
@@ -32,10 +35,10 @@ def register(mcp: FastMCP) -> None:
           Find by display name: {"type":"Contains","name":"name","value":"John"}
           Groups only: {"type":"Equals","name":"group","value":"true"}
         """
-        params: dict = {"page": page, "size": size}
+        params: dict = {}
         if filter:
             params["filter"] = filter
-        return await api_get("/external/v4/ad-users-or-groups", params) or []
+        return await paginate(api_get, "/external/v4/ad-users-or-groups", params, page, size, fetch_all)
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_ad_user_or_group(
@@ -74,6 +77,7 @@ def register(mcp: FastMCP) -> None:
     # ── Audit Events ───────────────────────────────────────────────────────────
 
     @mcp.tool(annotations=READ_ONLY)
+    @paginated
     async def list_audit_events(
         filter: Annotated[
             str,
@@ -81,15 +85,16 @@ def register(mcp: FastMCP) -> None:
         ] = "",
         page: Annotated[int, "Page number (1-based)"] = 1,
         size: Annotated[int, "Results per page (max 1000)"] = 100,
-    ) -> list:
+        fetch_all: Annotated[bool, FETCH_ALL_DOC] = False,
+    ) -> dict:
         """List Horizon audit events (administrative actions and system events).
 
         Useful for reviewing recent changes, troubleshooting, and compliance auditing.
         """
-        params: dict = {"page": page, "size": size}
+        params: dict = {}
         if filter:
             params["filter"] = filter
-        return await api_get("/external/v2/audit-events", params) or []
+        return await paginate(api_get, "/external/v2/audit-events", params, page, size, fetch_all)
 
     # ── vCenter Resources (for pool/farm provisioning reference) ───────────────
 

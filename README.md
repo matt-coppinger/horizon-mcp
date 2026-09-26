@@ -171,28 +171,28 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 ### Inventory
 | Tool | Description |
 |---|---|
-| `list_desktop_pools` | List all VDI and RDS desktop pools |
+| `list_desktop_pools` | List all VDI and RDS desktop pools (paginated) |
 | `get_desktop_pool` | Get pool details |
 | `create_desktop_pool` | Create a new desktop pool (VDI or RDS, automated or manual) |
 | `update_desktop_pool` | Update an existing desktop pool's configuration |
 | `delete_desktop_pool` | Delete a desktop pool and all its machines ⚠️ |
 | `desktop_pool_action` | Enable/disable a pool, or enable/disable-provisioning (⚠️ when disabling) |
-| `list_machines` | List virtual desktops (filterable by pool, state) |
+| `list_machines` | List virtual desktops (filterable by pool, state; paginated) |
 | `get_machine` | Get machine details |
 | `machine_action` | Shutdown, restart, reset, rebuild, archive ⚠️; recover, enter/exit maintenance |
 | `assign_machine_users` | Assign or unassign users to a dedicated (non-floating) desktop |
-| `list_rdsh_farms` | List RDS farms |
+| `list_rdsh_farms` | List RDS farms (paginated) |
 | `get_rdsh_farm` | Get farm details |
 | `create_rdsh_farm` | Create a new RDS farm (automated or manual) |
 | `update_rdsh_farm` | Update an existing RDS farm's configuration |
 | `delete_rdsh_farm` | Delete an RDS farm and all its servers ⚠️ |
 | `rdsh_farm_action` | Enable or disable one or more RDS farms (⚠️ when disabling) |
-| `list_application_pools` | List published application pools |
+| `list_application_pools` | List published application pools (paginated) |
 | `get_application_pool` | Get application pool details |
 | `create_application_pool` | Publish a new application pool from an RDS farm |
 | `update_application_pool` | Update an existing application pool's configuration |
 | `delete_application_pool` | Unpublish an application pool ⚠️ |
-| `list_sessions` | List active user sessions |
+| `list_sessions` | List active user sessions (paginated) |
 | `get_session` | Get session details |
 | `disconnect_sessions` | Disconnect sessions (keep running) ⚠️ |
 | `logoff_sessions` | Log off sessions (terminates apps) ⚠️ |
@@ -234,12 +234,12 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 ### External / Active Directory
 | Tool | Description |
 |---|---|
-| `search_ad_users_or_groups` | Find AD users and groups |
+| `search_ad_users_or_groups` | Find AD users and groups (paginated) |
 | `get_ad_user_or_group` | Get AD entity details |
 | `list_ad_domains` | List configured AD domains |
 | `list_ad_containers` | AD containers (OUs) in a domain — `rdn` → `ad_container_rdn` for provisioning |
 | `get_domain_netbios_map` | NETBIOS → DNS domain name map |
-| `list_audit_events` | Administrative audit log |
+| `list_audit_events` | Administrative audit log (paginated) |
 | `list_base_vms` | VMs available for pool base images |
 | `list_base_vm_snapshots` | Snapshots of a base VM (snapshot_id for instant clone pools) |
 | `list_datastores` | Datastores for provisioning (requires vcenter_id + host_or_cluster_id) |
@@ -341,6 +341,26 @@ Most list tools accept a `filter` parameter using Horizon's JSON filter format:
   ]
 }
 ```
+
+## Paginated List Results
+
+Tools marked *(paginated)* in the tables above (`list_desktop_pools`, `list_machines`, `list_rdsh_farms`, `list_application_pools`, `list_sessions`, `search_ad_users_or_groups`, `list_audit_events`) take `page` (1-based) and `size`, and return an envelope rather than a bare list:
+
+```json
+{
+  "items": [ ... ],
+  "count": 100,
+  "page": 1,
+  "size": 100,
+  "pages_fetched": 1,
+  "has_more": true,
+  "next_page": 2,
+  "truncated": false
+}
+```
+
+- **`has_more` / `next_page`** — call the tool again with `page=next_page` to continue. The Horizon REST API returns a bare array with no "more records" indicator, so `has_more` is inferred: it is `true` whenever a full page (`size` items) came back. When the total is an exact multiple of `size`, the next page simply comes back empty.
+- **`fetch_all=true`** — fetches successive pages starting at `page`, stopping at the first short page or after 10 pages / 5,000 items, whichever comes first. If it stops at the cap with more possibly remaining, `truncated` is `true` and `next_page` says where to resume. Prefer a `filter` when you only need a subset.
 
 ## Creating Pools and Farms
 
