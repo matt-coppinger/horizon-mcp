@@ -14,6 +14,8 @@ import os
 import mcp.types as mt
 from fastmcp.server.dependencies import get_context
 
+from .. import audit
+
 PROCEED = "Proceed"
 CANCEL = "Cancel"
 
@@ -37,6 +39,7 @@ async def require_confirmation(summary: str, *, confirm: bool = False) -> None:
     """Block until the user approves `summary`, or raise ConfirmationRequired.
 
     `summary` is shown to the user verbatim — say exactly what will happen and to what.
+    Every decision is written to the audit log.
     """
     summary = summary.rstrip(". ")
     try:
@@ -44,26 +47,38 @@ async def require_confirmation(summary: str, *, confirm: bool = False) -> None:
     except RuntimeError:
         ctx = None
 
+    def log(outcome: str, method: str) -> None:
+        audit.record("confirmation", summary=summary, outcome=outcome, method=method)
+
     if ctx is not None and _client_supports_elicitation(ctx):
-        result = await ctx.elicit(
-            f"{summary}.\n\nProceed?",
-            response_type=[PROCEED, CANCEL],
-            response_title="Confirm",
-        )
+        try:
+            result = await ctx.elicit(
+                f"{summary}.\n\nProceed?",
+                response_type=[PROCEED, CANCEL],
+                response_title="Confirm",
+            )
+        except Exception:
+            log("error", "elicitation")
+            raise
         if getattr(result, "action", None) == "accept" and getattr(result, "data", None) == PROCEED:
+            log("approved", "elicitation")
             return
+        log("cancelled", "elicitation")
         raise ConfirmationRequired(
             f"Cancelled by the user — nothing was changed ({summary}). Don't retry unless the user asks."
         )
 
     if _mode() == "flag":
         if confirm:
+            log("approved", "confirm_flag")
             return
+        log("missing_confirm", "confirm_flag")
         raise ConfirmationRequired(
             f"confirm=True is required for: {summary}. Show the user exactly what will happen and "
             "get their explicit approval before re-calling with confirm=True."
         )
 
+    log("refused", "no_elicitation")
     raise ConfirmationRequired(
         f"This operation needs the user's confirmation, but the MCP client doesn't support "
         f"elicitation (in-client confirmation prompts), so it was refused: {summary}. Use a client "

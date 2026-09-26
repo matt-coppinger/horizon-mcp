@@ -6,7 +6,15 @@ import httpx
 from fastmcp import FastMCP
 from pydantic import SecretStr
 
-from ..client import reset_client
+from .. import audit
+from ..client import (
+    get_refresh_token,
+    refresh_access_token,
+    reset_client,
+    set_refresh_token,
+    store_tokens,
+    verify_ssl,
+)
 from ._annotations import ADDITIVE
 
 
@@ -34,6 +42,26 @@ def _resolve_base_url(base_url: str) -> str:
     return url
 
 
+def _expose_tokens() -> bool:
+    """HORIZON_EXPOSE_TOKENS=true returns full tokens so an operator can copy them into config.
+
+    Off by default: anything a tool returns lands in the model's context (and the chat
+    transcript), and the server refreshes tokens itself, so the model never needs them.
+    """
+    return os.environ.get("HORIZON_EXPOSE_TOKENS", "").strip().lower() == "true"
+
+
+def _hint(token: str | None) -> str:
+    return f"{token[:8]}…" if token else ""
+
+
+def _stored_refresh_token(refresh_token: SecretStr | None) -> str:
+    value = refresh_token.get_secret_value() if refresh_token is not None else get_refresh_token()
+    if not value:
+        raise ValueError("No refresh token is stored on the server. Call horizon_login to sign in.")
+    return value
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ADDITIVE)
     async def horizon_login(
@@ -46,117 +74,132 @@ def register(mcp: FastMCP) -> None:
             "Defaults to HORIZON_BASE_URL env var if not provided.",
         ] = "",
     ) -> dict:
-        """Authenticate to Horizon and return access and refresh tokens.
+        """Authenticate to Horizon and activate the session for this server.
 
-        The access_token is valid for ~8 hours. The refresh_token can be used with
-        horizon_refresh_token to obtain a new access_token without re-entering credentials.
-
-        This tool also updates the running server's active token so subsequent tool calls
-        work immediately without restarting the server.
-
-        SECURITY: Copy the returned access_token to your MCP client config
-        (HORIZON_ACCESS_TOKEN env var), then clear it from the conversation.
-        Treat both tokens as passwords — do not share or log them.
+        The tokens are kept server-side: subsequent tool calls work immediately, and when
+        the access token expires (~8 hours) the server renews it automatically with the
+        refresh token. Only short token hints are returned.
         """
         url = _resolve_base_url(base_url)
-        verify = os.environ.get("HORIZON_VERIFY_SSL", "true").lower() != "false"
 
-        async with httpx.AsyncClient(verify=verify, timeout=15.0) as http:
-            resp = await http.post(
-                f"{url}/rest/login",
-                json={"domain": domain, "username": username, "password": password.get_secret_value()},
-            )
-            if not resp.is_success:
-                try:
-                    err = resp.json()
-                except Exception:
-                    err = resp.text
-                raise ValueError(f"Login failed ({resp.status_code}): {err}")
-            tokens: dict = resp.json()
-
-        os.environ["HORIZON_ACCESS_TOKEN"] = tokens["access_token"]
-        if not os.environ.get("HORIZON_BASE_URL"):
-            os.environ["HORIZON_BASE_URL"] = url
-        await reset_client()
+        status: int | str = "error"
+        try:
+            async with httpx.AsyncClient(verify=verify_ssl(), timeout=15.0) as http:
+                resp = await http.post(
+                    f"{url}/rest/login",
+                    json={"domain": domain, "username": username, "password": password.get_secret_value()},
+                )
+                status = resp.status_code
+                if not resp.is_success:
+                    try:
+                        err = resp.json()
+                    except Exception:
+                        err = resp.text
+                    raise ValueError(f"Login failed ({resp.status_code}): {err}")
+                tokens: dict = resp.json()
+        finally:
+            audit.record("auth", action="login", status=status)
 
         token = tokens["access_token"]
         refresh = tokens.get("refresh_token", "")
-        return {
+        if not os.environ.get("HORIZON_BASE_URL"):
+            os.environ["HORIZON_BASE_URL"] = url
+        # A new login replaces any earlier refresh token, even with none.
+        set_refresh_token(refresh)
+        await store_tokens(token)
+
+        result = {
             "status": "authenticated",
-            "note": "Token is now active for this server session. Set HORIZON_ACCESS_TOKEN in your MCP client config to persist it across restarts.",
-            "SECURITY": "Treat these tokens as passwords. Clear them from the conversation after copying to your config. Do not commit to version control.",
-            "access_token": token,
-            "access_token_hint": f"{token[:8]}…",
-            "refresh_token": refresh,
-            "refresh_token_hint": f"{refresh[:8]}…" if refresh else "",
+            "note": "Session is active for this server. Expired access tokens are renewed automatically "
+            "using the refresh token held by the server.",
+            "access_token_hint": _hint(token),
+            "refresh_token_hint": _hint(refresh),
         }
+        if _expose_tokens():
+            result.update({
+                "note": "Session is active for this server. To persist it across restarts, set "
+                "HORIZON_ACCESS_TOKEN and HORIZON_REFRESH_TOKEN in your MCP client config.",
+                "SECURITY": "Treat these tokens as passwords. Clear them from the conversation after copying "
+                "to your config. Do not commit to version control.",
+                "access_token": token,
+                "refresh_token": refresh,
+            })
+        return result
 
     @mcp.tool(annotations=ADDITIVE)
     async def horizon_refresh_token(
-        refresh_token: Annotated[SecretStr, "Refresh token obtained from horizon_login"],
+        refresh_token: Annotated[
+            SecretStr | None,
+            "Refresh token to use. Omit to use the one the server stored at login (normally what you want).",
+        ] = None,
         base_url: Annotated[
             str, "Horizon server URL. Defaults to HORIZON_BASE_URL env var."
         ] = "",
     ) -> dict:
-        """Exchange a refresh token for a new access token.
+        """Exchange the refresh token for a new access token.
 
-        Use this before the current access token expires (~8 hours) to maintain
-        an active session without re-entering credentials.
+        Rarely needed: the server already refreshes an expired access token automatically.
         """
         url = _resolve_base_url(base_url)
-        verify = os.environ.get("HORIZON_VERIFY_SSL", "true").lower() != "false"
+        refresh = _stored_refresh_token(refresh_token)
 
-        async with httpx.AsyncClient(verify=verify, timeout=15.0) as http:
-            resp = await http.post(
-                f"{url}/rest/refresh",
-                json={"refresh_token": refresh_token.get_secret_value()},
-            )
-            if not resp.is_success:
-                try:
-                    err = resp.json()
-                except Exception:
-                    err = resp.text
-                raise ValueError(f"Token refresh failed ({resp.status_code}): {err}")
-            result: dict = resp.json()
+        result = await refresh_access_token(url, refresh)
 
-        os.environ["HORIZON_ACCESS_TOKEN"] = result["access_token"]
-        await reset_client()
+        # Keep the refresh token that worked (a caller-supplied one becomes the stored one),
+        # unless the server rotated it.
+        set_refresh_token(refresh)
+        await store_tokens(result["access_token"], result.get("refresh_token"))
 
         token = result["access_token"]
-        return {
+        out = {
             "status": "token_refreshed",
-            "note": "New access token is now active for this server session. Update HORIZON_ACCESS_TOKEN in your MCP client config if you want to persist it.",
-            "SECURITY": "Treat this token as a password. Clear it from the conversation after copying.",
-            "access_token": token,
-            "access_token_hint": f"{token[:8]}…",
+            "note": "New access token is now active for this server session.",
+            "access_token_hint": _hint(token),
         }
+        if _expose_tokens():
+            out.update({
+                "note": "New access token is now active for this server session. Update HORIZON_ACCESS_TOKEN "
+                "in your MCP client config if you want to persist it.",
+                "SECURITY": "Treat this token as a password. Clear it from the conversation after copying.",
+                "access_token": token,
+            })
+        return out
 
     @mcp.tool(annotations=ADDITIVE)
     async def horizon_logout(
-        refresh_token: Annotated[SecretStr, "Refresh token to invalidate"],
+        refresh_token: Annotated[
+            SecretStr | None,
+            "Refresh token to invalidate. Omit to use the one the server stored at login.",
+        ] = None,
         base_url: Annotated[
             str, "Horizon server URL. Defaults to HORIZON_BASE_URL env var."
         ] = "",
     ) -> dict:
         """Invalidate the current Horizon session (access + refresh tokens)."""
         url = _resolve_base_url(base_url)
+        refresh = _stored_refresh_token(refresh_token)
         token = os.environ.get("HORIZON_ACCESS_TOKEN", "")
-        verify = os.environ.get("HORIZON_VERIFY_SSL", "true").lower() != "false"
         headers = {"Authorization": f"Bearer {token}"} if token else {}
 
-        async with httpx.AsyncClient(verify=verify, timeout=15.0) as http:
-            resp = await http.post(
-                f"{url}/rest/logout",
-                json={"refresh_token": refresh_token.get_secret_value()},
-                headers=headers,
-            )
-            if not resp.is_success:
-                try:
-                    err = resp.json()
-                except Exception:
-                    err = resp.text
-                raise ValueError(f"Logout failed ({resp.status_code}): {err}")
+        status: int | str = "error"
+        try:
+            async with httpx.AsyncClient(verify=verify_ssl(), timeout=15.0) as http:
+                resp = await http.post(
+                    f"{url}/rest/logout",
+                    json={"refresh_token": refresh},
+                    headers=headers,
+                )
+                status = resp.status_code
+                if not resp.is_success:
+                    try:
+                        err = resp.json()
+                    except Exception:
+                        err = resp.text
+                    raise ValueError(f"Logout failed ({resp.status_code}): {err}")
+        finally:
+            audit.record("auth", action="logout", status=status)
 
         os.environ.pop("HORIZON_ACCESS_TOKEN", None)
+        set_refresh_token(None)
         await reset_client()
         return {"logged_out": True}

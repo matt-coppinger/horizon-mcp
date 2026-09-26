@@ -20,7 +20,7 @@ The fastest path to a working setup, using Claude Code with stdio transport:
    ```
    Use the absolute path to where you cloned the repo. Omit `HORIZON_ACCESS_TOKEN` for now — you'll get one in the next step.
 3. **Restart Claude Code**, then get a token by asking it to call `horizon_login` (see [Getting an Access Token](#getting-an-access-token)) with your AD credentials.
-4. **Verify it works** — ask Claude Code to call `list_desktop_pools` or `get_infrastructure_health`. If you get real data back, you're set. To avoid logging in again after a restart, re-register with the `access_token` from step 3: `claude mcp remove horizon`, then repeat step 2 with `-e HORIZON_ACCESS_TOKEN=<token>` added.
+4. **Verify it works** — ask Claude Code to call `list_desktop_pools` or `get_infrastructure_health`. If you get real data back, you're set. The server keeps the tokens itself and renews the access token automatically when it expires, so you only log in again after the server restarts (or the refresh token expires). To persist the session across restarts, see [Getting an Access Token](#getting-an-access-token).
 
 Running the server standalone over HTTP instead (for remote/multi-user access, or in Docker)? See [HTTP (remote)](#http-remote) and [Docker](#docker).
 
@@ -46,6 +46,9 @@ The server reads configuration from environment variables:
 |---|---|---|
 | `HORIZON_BASE_URL` | Yes | Connection Server URL, e.g. `https://horizon.corp.example.com` |
 | `HORIZON_ACCESS_TOKEN` | Yes* | Bearer token — obtain via `horizon_login` tool |
+| `HORIZON_REFRESH_TOKEN` | No | Refresh token the server uses to renew an expired access token automatically. Set it to persist a session across restarts (with it, `HORIZON_ACCESS_TOKEN` can be omitted) |
+| `HORIZON_EXPOSE_TOKENS` | No | Set to `true` to make `horizon_login` / `horizon_refresh_token` return the full tokens (default: 8-character hints only), for copying into config |
+| `HORIZON_AUDIT_LOG` | No | File to append the JSON-lines audit log to (default: stderr). See [Audit log](#audit-log) |
 | `HORIZON_VERIFY_SSL` | No | Set to `false` to skip TLS cert verification (lab use only) |
 | `HORIZON_CONFIRMATION` | No | `elicit` (default): destructive tools ask the user to confirm in the MCP client, and are refused if the client can't show the prompt. `flag`: fall back to a `confirm=True` argument for clients without elicitation. See [Confirming destructive operations](#confirming-destructive-operations) |
 | `HORIZON_MAX_BULK_DESTRUCTIVE` | No | Most machines `machine_action` will rebuild, reset or archive in one call (default `20`) |
@@ -58,7 +61,7 @@ The server reads configuration from environment variables:
 | `MCP_ALLOWED_HOSTS` | No | Comma-separated host names the HTTP server answers to (Host header check). Defaults to loopback names when bound to loopback; unchecked otherwise |
 | `MCP_ALLOWED_ORIGINS` | No | Comma-separated browser origins allowed to call the HTTP server, e.g. `https://app.example.com`. Loopback origins are allowed when bound to loopback |
 
-*`HORIZON_ACCESS_TOKEN` can also be obtained at runtime by calling the `horizon_login` tool.
+*`HORIZON_ACCESS_TOKEN` can also be obtained at runtime by calling the `horizon_login` tool, or from `HORIZON_REFRESH_TOKEN`.
 
 ## Usage
 
@@ -131,7 +134,7 @@ docker run -d -p 8000:8000 \
   horizon-mcp
 ```
 
-Or with `docker-compose.yml` (reads `HORIZON_BASE_URL`, `HORIZON_ACCESS_TOKEN`, `HORIZON_VERIFY_SSL`, and `MCP_API_KEY` from your shell environment or a `.env` file):
+Or with `docker-compose.yml` (reads `HORIZON_BASE_URL`, `HORIZON_ACCESS_TOKEN`, `HORIZON_REFRESH_TOKEN`, `HORIZON_VERIFY_SSL`, and `MCP_API_KEY` from your shell environment or a `.env` file):
 
 ```bash
 HORIZON_BASE_URL=https://horizon.corp.example.com MCP_API_KEY=your-secret-key docker compose up -d
@@ -151,11 +154,13 @@ Call horizon_login with:
   base_url: https://horizon.corp.example.com
 ```
 
-The tool returns `access_token` and `refresh_token`, and immediately activates the new token for the current server session. Copy the `access_token` value into your MCP client config and restart the server to persist it across restarts.
+The new session is active immediately. The server keeps the access and refresh tokens itself — the tool returns only their first 8 characters (`access_token_hint`, `refresh_token_hint`), so the tokens never enter the conversation.
 
-> **Security:** Treat `access_token` and `refresh_token` as passwords. After copying the token to your config, clear it from the conversation context. Do not commit tokens to version control.
+When the access token expires (~8 hours) and Horizon answers a request with HTTP 401, the server refreshes it with the stored refresh token and retries the request once. If there's no refresh token, or Horizon rejects it, the tool call fails with a message asking you to call `horizon_login` again. `horizon_refresh_token` and `horizon_logout` use the stored refresh token when you don't pass one.
 
-Use `horizon_refresh_token` with the `refresh_token` to renew the access token (~8 hour expiry) without re-entering credentials.
+**Persisting the session across restarts:** tokens held in the server are lost when it restarts. To keep a session, set `HORIZON_EXPOSE_TOKENS=true` on the server, call `horizon_login` once — it then returns the full `access_token` and `refresh_token` — and put them in your MCP client config as `HORIZON_ACCESS_TOKEN` and `HORIZON_REFRESH_TOKEN` (the refresh token alone is enough; the server gets an access token from it on the first call). Then unset `HORIZON_EXPOSE_TOKENS`.
+
+> **Security:** Treat both tokens as passwords. If you expose them, clear them from the conversation after copying them to your config. Do not commit tokens to version control.
 
 ## Available Tools
 
@@ -164,8 +169,8 @@ Use `horizon_refresh_token` with the `refresh_token` to renew the access token (
 ### Auth
 | Tool | Description |
 |---|---|
-| `horizon_login` | Authenticate with AD credentials (password masked in logs), returns access + refresh tokens |
-| `horizon_refresh_token` | Refresh an expired access token |
+| `horizon_login` | Authenticate with AD credentials (password masked in logs); the server keeps the tokens and returns hints |
+| `horizon_refresh_token` | Renew the access token now (the server also does this automatically on expiry) |
 | `horizon_logout` | Invalidate current session |
 
 ### Inventory
@@ -433,6 +438,16 @@ If your client doesn't support elicitation, these tools are **refused** by defau
 
 These tools, plus the `update_*` tools and `assign_machine_users`, also carry `destructiveHint=True`, so clients that gate tool calls on MCP annotations will prompt before running them.
 
+### Audit log
+
+The server writes one JSON line per event to **stderr**, or appends to the file named by `HORIZON_AUDIT_LOG`. It never writes to stdout, which stdio transport uses for the MCP protocol. Each line has a UTC timestamp (`ts`), the `event` type and the `tool` that triggered it:
+
+- `confirmation` — every confirmation decision: the `summary` shown to the user and the `outcome` (`approved`, `cancelled`, `refused` because the client can't prompt, or in `flag` mode `approved` / `missing_confirm`).
+- `api_request` — every POST, PUT and DELETE sent to Horizon: `method`, `path`, and the HTTP `status` (or the exception type as `error`), plus `retried` if the token was refreshed first. GETs aren't logged.
+- `auth` — login, logout and token refresh (manual or automatic) and their status.
+
+Request bodies, passwords, usernames, tokens and `Authorization` headers are never logged.
+
 ## Running Tests
 
 ```bash
@@ -444,8 +459,9 @@ uv run pytest tests/ -v
 - Store credentials in your MCP client's `env` block, not in code or config files tracked by git.
 - In production, always keep `HORIZON_VERIFY_SSL=true` (default).
 - Passwords passed to `horizon_login` are typed as `SecretStr` and masked in server-side logs.
-- Access and refresh tokens are returned in the login response so you can copy them to your config — treat them as passwords and clear them from the conversation after use.
-- The server holds one Horizon session (the token from `HORIZON_ACCESS_TOKEN` or the last `horizon_login`) shared by every client connected to it. For multiple users, run a separate instance per user with its own `HORIZON_ACCESS_TOKEN` and `MCP_API_KEY`, behind a reverse proxy that enforces TLS.
+- Access and refresh tokens stay inside the server process: login and refresh return only 8-character hints, and expired tokens are renewed automatically, so tokens don't pass through the conversation. `HORIZON_EXPOSE_TOKENS=true` returns the full tokens for copying into config — leave it off otherwise, and treat the tokens as passwords.
+- The server holds one Horizon session (from `HORIZON_ACCESS_TOKEN` / `HORIZON_REFRESH_TOKEN` or the last `horizon_login`) shared by every client connected to it. For multiple users, run a separate instance per user with its own tokens and `MCP_API_KEY`, behind a reverse proxy that enforces TLS.
+- Destructive-operation decisions and every mutating Horizon request are recorded in an [audit log](#audit-log) (stderr or `HORIZON_AUDIT_LOG`), without request bodies or secrets.
 - Destructive operations ask the user to confirm in the MCP client and are refused if the client can't prompt — see [Confirming destructive operations](#confirming-destructive-operations).
 - HTTP transport requires `MCP_API_KEY`, binds to `127.0.0.1` by default, and validates `Host`/`Origin` headers against DNS rebinding.
 - IDs passed to tools are percent-encoded before being placed in Horizon API paths, so an ID can't redirect a request to a different endpoint.

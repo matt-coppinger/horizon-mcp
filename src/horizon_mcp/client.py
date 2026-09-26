@@ -6,9 +6,41 @@ from urllib.parse import quote, unquote
 
 import httpx
 
+from . import audit
+
 _client: httpx.AsyncClient | None = None
 # Module-level lock is safe in Python 3.10+ (no longer bound to a loop at construction).
 _lock = asyncio.Lock()
+# Separate from _lock: a refresh calls reset_client(), which takes _lock itself.
+_refresh_lock = asyncio.Lock()
+
+# The refresh token stays in this process: it isn't returned to the model (unless
+# HORIZON_EXPOSE_TOKENS=true) or put in os.environ, so subprocesses don't inherit it.
+_refresh_token: str | None = os.environ.get("HORIZON_REFRESH_TOKEN") or None
+
+_MUTATING = ("POST", "PUT", "DELETE")
+_RELOGIN = "Call horizon_login to sign in again."
+
+
+class TokenRefreshError(ValueError):
+    """The Horizon /rest/refresh call failed. status_code is None for transport errors."""
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def verify_ssl() -> bool:
+    return os.environ.get("HORIZON_VERIFY_SSL", "true").lower() != "false"
+
+
+def get_refresh_token() -> str | None:
+    return _refresh_token
+
+
+def set_refresh_token(token: str | None) -> None:
+    global _refresh_token
+    _refresh_token = token or None
 
 
 async def get_client() -> httpx.AsyncClient:
@@ -31,7 +63,7 @@ async def get_client() -> httpx.AsyncClient:
                 "HORIZON_ACCESS_TOKEN is not set. "
                 "Call horizon_login to authenticate and get an access token."
             )
-        verify = os.environ.get("HORIZON_VERIFY_SSL", "true").lower() != "false"
+        verify = verify_ssl()
         _client = httpx.AsyncClient(
             base_url=f"{base_url}/rest",
             headers={"Authorization": f"Bearer {token}"},
@@ -98,39 +130,110 @@ def _parse_error(resp: httpx.Response) -> str:
         return resp.text or f"HTTP {resp.status_code}"
 
 
-async def api_get(path: str, params: dict[str, Any] | None = None) -> Any:
+async def refresh_access_token(base_url: str, refresh_token: str, *, trigger: str = "tool") -> dict:
+    """POST {base_url}/rest/refresh and return the response body ({"access_token": ...}).
+
+    Shared by horizon_refresh_token and the automatic refresh on 401. Stores nothing —
+    the caller decides what to do with the result. Raises TokenRefreshError on failure.
+    """
+    status: int | str = "error"
+    try:
+        async with httpx.AsyncClient(verify=verify_ssl(), timeout=15.0) as http:
+            try:
+                resp = await http.post(f"{base_url}/rest/refresh", json={"refresh_token": refresh_token})
+            except httpx.HTTPError as exc:
+                raise TokenRefreshError(f"Token refresh failed: {type(exc).__name__}") from None
+            status = resp.status_code
+            if not resp.is_success:
+                try:
+                    err = resp.json()
+                except Exception:
+                    err = resp.text
+                raise TokenRefreshError(f"Token refresh failed ({resp.status_code}): {err}", resp.status_code)
+            return resp.json()
+    finally:
+        audit.record("auth", action="refresh", trigger=trigger, status=status)
+
+
+async def store_tokens(access_token: str, refresh_token: str | None = None) -> None:
+    """Make access_token the active token (and keep refresh_token, if one is given)."""
+    os.environ["HORIZON_ACCESS_TOKEN"] = access_token
+    if refresh_token:
+        set_refresh_token(refresh_token)
+    await reset_client()
+
+
+async def _refresh_session(stale_token: str) -> None:
+    """Replace stale_token with a new access token — once, however many requests got a 401.
+
+    Requests queued on the lock find the token already replaced and just retry with it.
+    """
+    async with _refresh_lock:
+        if os.environ.get("HORIZON_ACCESS_TOKEN", "") != stale_token:
+            return
+        if not _refresh_token:
+            raise ValueError(
+                "The Horizon access token is missing, expired or was rejected (HTTP 401), and there's "
+                f"no refresh token to renew it automatically. {_RELOGIN}"
+            )
+        base_url = os.environ.get("HORIZON_BASE_URL", "").rstrip("/")
+        try:
+            result = await refresh_access_token(base_url, _refresh_token, trigger="auto")
+        except TokenRefreshError as exc:
+            # A refresh token the server rejected won't start working again: drop it so
+            # later calls fail fast instead of each retrying it. Keep it on network errors.
+            if exc.status_code is not None and 400 <= exc.status_code < 500:
+                set_refresh_token(None)
+            raise ValueError(
+                f"The Horizon access token has expired and couldn't be refreshed automatically ({exc}). {_RELOGIN}"
+            ) from None
+        await store_tokens(result["access_token"], result.get("refresh_token"))
+
+
+async def _send(method: str, path: str, **kwargs: Any) -> Any:
+    """Send one request; on a 401, refresh the token and retry exactly once."""
     _reject_traversal(path)
-    client = await get_client()
-    clean = {k: v for k, v in (params or {}).items() if v is not None}
-    resp = await client.get(path, params=clean)
+    retried = False
+    try:
+        if not os.environ.get("HORIZON_ACCESS_TOKEN") and _refresh_token:
+            # Started with only HORIZON_REFRESH_TOKEN (or after a failed login) — get an access token first.
+            await _refresh_session("")
+        client = await get_client()
+        token = os.environ.get("HORIZON_ACCESS_TOKEN", "")
+        resp = await client.request(method, path, **kwargs)
+        if resp.status_code == 401:
+            await _refresh_session(token)
+            retried = True
+            client = await get_client()
+            resp = await client.request(method, path, **kwargs)
+    except Exception as exc:
+        # Log the exception type only — messages from lower layers aren't guaranteed secret-free.
+        if method in _MUTATING:
+            audit.record("api_request", method=method, path=path, error=type(exc).__name__, retried=retried)
+        raise
+    if method in _MUTATING:
+        audit.record("api_request", method=method, path=path, status=resp.status_code, retried=retried)
     if not resp.is_success:
-        raise ValueError(f"GET {path} failed ({resp.status_code}): {_parse_error(resp)}")
+        hint = f" Still rejected after refreshing the token. {_RELOGIN}" if retried and resp.status_code == 401 else ""
+        raise ValueError(f"{method} {path} failed ({resp.status_code}): {_parse_error(resp)}{hint}")
     return resp.json() if resp.content else None
+
+
+def _clean(params: dict[str, Any] | None) -> dict[str, Any]:
+    return {k: v for k, v in (params or {}).items() if v is not None}
+
+
+async def api_get(path: str, params: dict[str, Any] | None = None) -> Any:
+    return await _send("GET", path, params=_clean(params))
 
 
 async def api_post(path: str, body: Any = None, params: dict[str, Any] | None = None) -> Any:
-    _reject_traversal(path)
-    client = await get_client()
-    clean = {k: v for k, v in (params or {}).items() if v is not None}
-    resp = await client.post(path, json=body, params=clean)
-    if not resp.is_success:
-        raise ValueError(f"POST {path} failed ({resp.status_code}): {_parse_error(resp)}")
-    return resp.json() if resp.content else None
+    return await _send("POST", path, json=body, params=_clean(params))
 
 
 async def api_put(path: str, body: Any = None) -> Any:
-    _reject_traversal(path)
-    client = await get_client()
-    resp = await client.put(path, json=body)
-    if not resp.is_success:
-        raise ValueError(f"PUT {path} failed ({resp.status_code}): {_parse_error(resp)}")
-    return resp.json() if resp.content else None
+    return await _send("PUT", path, json=body)
 
 
 async def api_delete(path: str, body: Any = None) -> Any:
-    _reject_traversal(path)
-    client = await get_client()
-    resp = await client.request("DELETE", path, json=body)
-    if not resp.is_success:
-        raise ValueError(f"DELETE {path} failed ({resp.status_code}): {_parse_error(resp)}")
-    return resp.json() if resp.content else None
+    return await _send("DELETE", path, json=body)

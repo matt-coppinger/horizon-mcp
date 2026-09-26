@@ -4,7 +4,7 @@ import os
 from fastmcp import FastMCP
 from fastmcp.server.auth import StaticTokenVerifier
 
-from . import resources
+from . import audit, resources
 from .tools import auth, config, discovery, entitlements, external, helpdesk, inventory, monitor
 
 # When MCP_API_KEY is set, HTTP transport requires clients to send
@@ -26,7 +26,10 @@ Horizon Server REST API for versions 2512 through 2606).
 
 Required environment variables:
   HORIZON_BASE_URL         Horizon Connection Server URL, e.g. https://horizon.corp.example.com
-  HORIZON_ACCESS_TOKEN     Bearer token — obtain via horizon_login, then set here
+  HORIZON_ACCESS_TOKEN     (optional) Bearer token; otherwise obtained via horizon_login
+  HORIZON_REFRESH_TOKEN    (optional) Refresh token used to renew the access token automatically
+  HORIZON_EXPOSE_TOKENS    'true' makes horizon_login/horizon_refresh_token return full tokens
+  HORIZON_AUDIT_LOG        (optional) File for the JSON-lines audit log (default: stderr)
   HORIZON_VERIFY_SSL       Set to 'false' to skip TLS verification (lab use only)
   MCP_TRANSPORT            Transport: 'stdio' (default) | 'streamable-http' | 'sse'
   MCP_HOST / MCP_PORT      Host/port when using HTTP transport (default 127.0.0.1:8000)
@@ -35,10 +38,10 @@ Required environment variables:
                            'flag': accept confirm=True instead
 
 Workflow:
-1. Call horizon_login with AD credentials to receive access_token + refresh_token.
-2. Store the access_token as HORIZON_ACCESS_TOKEN in your MCP client config and restart,
-   OR the login tool will update the running server's token automatically for this session.
-3. Use refresh token via horizon_refresh_token before expiry (~8 hours).
+1. If a tool says the session expired or no token is set, call horizon_login with AD credentials.
+   The server keeps the tokens itself; only short hints are returned.
+2. The server renews an expired access token (~8 hours) automatically using the stored
+   refresh token. There's no need to call horizon_refresh_token or to handle tokens yourself.
 
 Tool groups:
   Auth         — login (SecretStr password), logout, token refresh
@@ -64,6 +67,9 @@ retry without asking. Clients that can't show confirmation prompts are refused u
 the operator sets HORIZON_CONFIRMATION=flag.
 """,
 )
+
+# Lets audit log lines name the tool that triggered them.
+mcp.add_middleware(audit.ToolNameMiddleware())
 
 auth.register(mcp)
 config.register(mcp)
