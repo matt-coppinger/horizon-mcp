@@ -439,6 +439,62 @@ These tools, plus the `update_*` tools and `assign_machine_users`, also carry `d
 uv run pytest tests/ -v
 ```
 
+The unit tests are offline. The live integration tests in `tests/live/` are collected but skipped unless you point them at a server — see below.
+
+## Live integration tests
+
+> ⚠️ **Use a lab, never production.** The read-only sweep changes nothing, but the opt-in write tests disable/enable a farm, publish and delete application pools, change entitlements, write settings back, and (with the destructive flag) provision and delete a real RDS farm.
+
+`tests/live/` spawns the real server over MCP stdio (the way Claude Desktop / Code run it), logs in through `horizon_login`, and calls tools exactly as a client would. Destructive tools are confirmed through real MCP elicitation: the test's handler approves a prompt **only** if it names an ID the test itself created (or `HZ_TEST_FARM`'s ID), or — for the settings round trips — says no fields differ. Everything else is cancelled, and each test asserts that every prompt it saw was expected.
+
+| Test | Needs | What it does to the environment |
+|---|---|---|
+| `test_read_only.py` — one check per read-only tool, chaining IDs from list results into get calls; a check is skipped with a reason when the lab has nothing to feed it (e.g. no active sessions) | the four required vars | Nothing (logs in, reads, logs out) |
+| `test_writes.py::test_rdsh_farm_action_and_noop_update` | `HZ_LIVE_WRITES=1`, `HZ_TEST_FARM` | Disables then re-enables the test farm (or the reverse if it starts disabled), writes its config back unchanged; restores the original enabled state in a `finally` |
+| `test_writes.py::test_application_pool_lifecycle` | `HZ_LIVE_WRITES=1`, `HZ_TEST_FARM` | Publishes a uniquely named app pool (`mcp-live-<random>`) on the test farm, renames and restores its display name, deletes it |
+| `test_writes.py::test_application_pool_entitlements_add_remove` | `HZ_LIVE_WRITES=1`, `HZ_TEST_FARM`, `HZ_TEST_GROUP` | Same kind of throwaway app pool; entitles the group, removes it again, deletes the pool |
+| `test_writes.py::test_update_global_policies_noop`, `test_update_settings_general_noop` | `HZ_LIVE_WRITES=1` | Reads global policies / general settings and writes the identical object back; asserts nothing changed (writes the original back if anything did) |
+| `test_destructive.py::test_create_and_delete_rdsh_farm` | `HZ_LIVE_WRITES=1`, `HZ_LIVE_DESTRUCTIVE=1`, `HZ_BASE_VM`, `HZ_SNAPSHOT` | Creates a throwaway 1-server instant-clone farm (`mcp-live-<random>`), deletes it with `delete_rdsh_farm`, polls until it's gone. **Provisions a real VM — expect this to take many minutes.** |
+
+Tests only ever modify `HZ_TEST_FARM` and resources they create themselves, and created resources are always deleted in teardown. If a teardown fails, the test prints `MANUAL CLEANUP MAY BE NEEDED` with the resource's name and ID.
+
+**Environment variables**
+
+| Variable | Purpose |
+|---|---|
+| `HZ_BASE_URL`, `HZ_USERNAME`, `HZ_DOMAIN`, `HZ_PASSWORD` | **Required** — without all four, every live test is skipped |
+| `HZ_VERIFY_SSL` | `false` for a lab with a self-signed certificate (default `true`) |
+| `HZ_LIVE_WRITES=1` | Enable the reversible write tests |
+| `HZ_LIVE_DESTRUCTIVE=1` | Additionally enable the farm create/delete test |
+| `HZ_TEST_FARM` | Name of a dedicated test RDS farm the write tests may modify and publish apps from |
+| `HZ_TEST_GROUP` | AD group (name or SID) to entitle to the test app pool |
+| `HZ_TEST_APP_PATH` | Executable for the test app pool (default `C:\Windows\System32\notepad.exe`) |
+| `HZ_BASE_VM`, `HZ_SNAPSHOT` | Base VM and snapshot (name or ID) for the throwaway farm. Use the snapshot taken **after** the Horizon Agent was installed |
+| `HZ_VCENTER`, `HZ_DATACENTER`, `HZ_CLUSTER`, `HZ_RESOURCE_POOL`, `HZ_VM_FOLDER`, `HZ_DATASTORE`, `HZ_ACCESS_GROUP`, `HZ_IC_DOMAIN_ACCOUNT` | Optional (name or ID) — otherwise the first one listed is used |
+| `HZ_AD_CONTAINER` | Optional AD container RDN for the throwaway farm's servers |
+| `HZ_LIVE_PROVISION_TIMEOUT` | Seconds to wait for each farm provisioning/teardown step (default `1800`) |
+| `HZ_LIVE_REPORT` | Write an HTML report (secrets redacted) to this path, e.g. `.live-reports/report.html` (ignored by git) |
+| `HZ_LIVE_SERVER_LOG` | Where to write the server's stderr (default: a temp file, printed at the end of the run) |
+
+**Running**
+
+```bash
+# Read-only sweep
+export HZ_BASE_URL=https://<connection-server> HZ_USERNAME=<user> HZ_DOMAIN=<domain> HZ_VERIFY_SSL=false
+read -rs HZ_PASSWORD && export HZ_PASSWORD
+uv run pytest tests/live -v -rs
+
+# Plus reversible writes, with an HTML report
+HZ_LIVE_WRITES=1 HZ_TEST_FARM=<test-farm> HZ_TEST_GROUP=<ad-group> \
+  HZ_LIVE_REPORT=.live-reports/report.html uv run pytest tests/live -v -rs
+
+# Plus the farm create/delete test (slow — provisions a VM)
+HZ_LIVE_WRITES=1 HZ_LIVE_DESTRUCTIVE=1 HZ_BASE_VM=<base-vm> HZ_SNAPSHOT=<agent-snapshot> \
+  uv run pytest tests/live/test_destructive.py -v -s
+```
+
+Add `-s` to watch each tool call and confirmation prompt as it happens. `-m "not live"` deselects the suite entirely.
+
 ## Security Notes
 
 - Store credentials in your MCP client's `env` block, not in code or config files tracked by git.

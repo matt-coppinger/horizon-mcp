@@ -12,3 +12,4 @@ build/
 .env.local
 .DS_Store
 .local-testing/
+.live-reports/
