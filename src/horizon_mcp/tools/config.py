@@ -120,6 +120,11 @@ def register(mcp: FastMCP) -> None:
           agent-restriction → horizon://config/settings/agent-restriction
 
         Always read the current settings first and only modify the fields you intend to change.
+
+        general: Horizon returns restricted_client_data entries that have only a "type", but
+        rejects them on update with "Restricted client version must be set for client type
+        <TYPE>" (verified on 2606), so passing the settings back unchanged fails. Give every
+        restricted_client_data entry a "version" before calling this.
         """
         paths = {
             "general": "/config/v1/settings/general",

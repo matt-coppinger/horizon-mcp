@@ -7,6 +7,21 @@ include breaking changes, which are called out below).
 
 ## [Unreleased]
 
+### Breaking
+- `horizon_login` and `horizon_refresh_token` return only 8-character token hints; the server keeps the tokens itself. Set `HORIZON_EXPOSE_TOKENS=true` to get the full values back (e.g. to copy into a client config). (#20)
+- The seven paginated list tools (`list_desktop_pools`, `list_machines`, `list_rdsh_farms`, `list_application_pools`, `list_sessions`, `search_ad_users_or_groups`, `list_audit_events`) return `{items, count, page, size, pages_fetched, has_more, next_page, truncated}` instead of a bare list. (#21)
+
+### Added
+- Automatic token refresh: on HTTP 401 the server refreshes once using the refresh token it holds, then retries the request once. `HORIZON_REFRESH_TOKEN` can seed it at startup, and `horizon_refresh_token` / `horizon_logout` no longer need a token argument. (#20)
+- Audit log: one JSON line per confirmation decision, write request (POST/PUT/DELETE) and login/refresh/logout, on stderr or to `HORIZON_AUDIT_LOG`. Request bodies, tokens and passwords are never logged. (#20)
+- `has_more` / `next_page` on paginated list results, and an optional `fetch_all` (up to 10 pages / 5,000 items). (#21)
+- Opt-in live integration suite in `tests/live/`, driving the server over MCP stdio against a real Horizon lab. It is skipped unless `HZ_*` variables are set. (#22)
+
+### Fixed
+- Nine bulk-action tools (`machine_action`, session actions, `desktop_pool_action`, `set_pool_entitlements`, `assign_machine_users`, `send_message_to_sessions`, `trigger_connection_server_backup`) reported an error over MCP even after Horizon had done the work, because Horizon's list response was rejected by the tools' dict return type. They now return `{success, succeeded, failed}`, which also shows partial failures. (#19)
+- `create_desktop_pool` and `create_rdsh_farm` raised "may not have been created" on Horizon's documented empty 201 success response. They and `create_application_pool` now look the new item up by name and return its ID. (#19)
+- `update_settings` now warns that Horizon rejects its own `general` settings unless every `restricted_client_data` entry has a `version` (verified on 2606).
+
 ## [0.2.0] - 2026-09-26
 
 Security hardening and fixes found by testing against a live Horizon 2606 server.
