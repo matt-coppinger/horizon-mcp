@@ -111,3 +111,19 @@ async def test_create_with_empty_201_succeeds_over_protocol(monkeypatch, name, a
     assert not result.is_error, result.content[0].text if result.content else result
     assert result.data == {"success": True, "id": "new-1", "name": "P"}
     assert get.call_args.args[0] == lookup
+
+
+async def test_create_falls_back_to_unfiltered_lookup(monkeypatch):
+    # Live 2606: filtering farms by name returned nothing for a farm that existed.
+    monkeypatch.undo()
+    calls = []
+
+    async def fake_get(path, params=None):
+        calls.append(params)
+        return [] if params and "filter" in params else [{"id": "other", "name": "X"}, {"id": "farm-new", "name": "P"}]
+
+    with patch("horizon_mcp.tools.inventory.api_post", return_value=None), \
+         patch("horizon_mcp.tools.inventory.api_get", side_effect=fake_get):
+        result = await _call("create_rdsh_farm", {"spec": {"name": "P"}})
+    assert result.data == {"success": True, "id": "farm-new", "name": "P"}
+    assert "filter" in calls[0] and "filter" not in calls[1]

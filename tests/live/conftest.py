@@ -34,7 +34,8 @@ def pytest_sessionfinish(session, exitstatus):
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render(harness.ROWS, harness.TOOLS, harness.PROMPTS, started=_STARTED[0],
-                           duration=time.perf_counter() - _STARTED[1], outcomes=outcomes), encoding="utf-8")
+                           duration=time.perf_counter() - _STARTED[1], outcomes=outcomes,
+                           coverage=harness.COVERAGE or None), encoding="utf-8")
 
 
 def pytest_terminal_summary(terminalreporter):
