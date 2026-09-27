@@ -95,8 +95,30 @@ def read_users_file(path: str | os.PathLike, *, missing_ok: bool = False) -> lis
         raise UsersFileError(f"Users file {str(p)!r}: {exc}") from None
 
 
+def check_users_file_permissions(path: str | os.PathLike) -> None:
+    """Refuse a users file (or its directory) that others can write to.
+
+    The file holds only hashes, so being readable is harmless, but anyone who can write
+    to it could add their own key and sign in as a user. The CLI writes it as 0600.
+    """
+    if os.name != "posix":
+        return
+    p = Path(path)
+    for target, what in ((p, "file"), (p.resolve().parent, "directory")):
+        try:
+            mode = target.stat().st_mode
+        except OSError:
+            continue  # a missing file is reported by read_users_file
+        if mode & 0o022:
+            raise UsersFileError(
+                f"Users {what} {str(target)!r} is writable by group or others (mode {oct(mode & 0o777)}), "
+                f"so anyone who can write to it could add their own key. Fix with: chmod go-w {str(target)!r}"
+            )
+
+
 def load_users(path: str | os.PathLike) -> dict[str, str]:
     """name -> key hash, for a users file that must exist and list at least one user."""
+    check_users_file_permissions(path)
     users = read_users_file(path)
     if not users:
         raise UsersFileError(f"Users file {str(path)!r} lists no users. Add one with: horizon-mcp-keys add <name>")

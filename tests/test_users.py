@@ -174,3 +174,46 @@ async def test_verifier_compares_every_hash_with_compare_digest(verifier, monkey
     calls.clear()
     assert await verifier.verify_token("nobody") is None
     assert len(calls) == 2
+
+
+# ── users file permissions ────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("mode", [0o620, 0o602, 0o666])
+def test_load_users_refuses_file_writable_by_others(tmp_path, mode):
+    import os
+
+    from horizon_mcp.users import UsersFileError, hash_key, load_users
+
+    f = tmp_path / "users.json"
+    f.write_text('{"users": [{"name": "alice", "key_sha256": "%s"}]}' % hash_key("k" * 40))
+    os.chmod(tmp_path, 0o700)
+    os.chmod(f, mode)
+    with pytest.raises(UsersFileError, match="writable by group or others"):
+        load_users(f)
+
+
+def test_load_users_refuses_directory_writable_by_others(tmp_path):
+    import os
+
+    from horizon_mcp.users import UsersFileError, hash_key, load_users
+
+    d = tmp_path / "cfg"
+    d.mkdir()
+    f = d / "users.json"
+    f.write_text('{"users": [{"name": "alice", "key_sha256": "%s"}]}' % hash_key("k" * 40))
+    os.chmod(f, 0o600)
+    os.chmod(d, 0o777)
+    with pytest.raises(UsersFileError, match="directory"):
+        load_users(f)
+
+
+def test_load_users_accepts_readable_but_not_writable(tmp_path):
+    import os
+
+    from horizon_mcp.users import hash_key, load_users
+
+    f = tmp_path / "users.json"
+    f.write_text('{"users": [{"name": "alice", "key_sha256": "%s"}]}' % hash_key("k" * 40))
+    os.chmod(tmp_path, 0o755)
+    os.chmod(f, 0o644)
+    assert set(load_users(f)) == {"alice"}
