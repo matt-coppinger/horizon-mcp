@@ -157,7 +157,7 @@ HORIZON_BASE_URL=https://horizon.corp.example.com \
 horizon-mcp
 ```
 
-The server reads the file at startup: **restart it after adding or removing users**. It refuses to start if the file is missing or invalid (bad JSON, no users, duplicate names or hashes, anything that isn't a 64-hex hash), if `MCP_API_KEY` is also set, if `HORIZON_ACCESS_TOKEN` or `HORIZON_REFRESH_TOKEN` is set (that would be one token shared by everyone), if `HORIZON_BASE_URL` is missing (so every login goes to the configured server), or with `MCP_ALLOW_UNAUTHENTICATED=true`.
+The server reads the file at startup: **restart it after adding or removing users**. It refuses to start if the file is missing or invalid (bad JSON, no users, duplicate names or hashes, anything that isn't a 64-hex hash), if `MCP_API_KEY` is also set, if `HORIZON_ACCESS_TOKEN` or `HORIZON_REFRESH_TOKEN` is set (that would be one token shared by everyone), if `HORIZON_BASE_URL` is missing (so every login goes to the configured server), with `MCP_ALLOW_UNAUTHENTICATED=true`, or if the file or its directory is writable by group or others (anyone who could write to it could add their own key — `chmod go-w` it).
 
 **3. Each person configures their client with their own key**, e.g. for Claude Code:
 
