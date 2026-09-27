@@ -45,8 +45,8 @@ The server reads configuration from environment variables:
 | Variable | Required | Description |
 |---|---|---|
 | `HORIZON_BASE_URL` | Yes | Connection Server URL, e.g. `https://horizon.corp.example.com` |
-| `HORIZON_ACCESS_TOKEN` | Yes* | Bearer token — obtain via `horizon_login` tool |
-| `HORIZON_REFRESH_TOKEN` | No | Refresh token the server uses to renew an expired access token automatically. Set it to persist a session across restarts (with it, `HORIZON_ACCESS_TOKEN` can be omitted) |
+| `HORIZON_ACCESS_TOKEN` | Yes* | Bearer token — obtain via `horizon_login` tool. Single-user modes only: a multi-user server refuses to start with it set |
+| `HORIZON_REFRESH_TOKEN` | No | Refresh token the server uses to renew an expired access token automatically. Set it to persist a session across restarts (with it, `HORIZON_ACCESS_TOKEN` can be omitted). Single-user modes only |
 | `HORIZON_EXPOSE_TOKENS` | No | Set to `true` to make `horizon_login` / `horizon_refresh_token` return the full tokens (default: 8-character hints only), for copying into config |
 | `HORIZON_AUDIT_LOG` | No | File to append the JSON-lines audit log to (default: stderr). See [Audit log](#audit-log) |
 | `HORIZON_VERIFY_SSL` | No | Set to `false` to skip TLS cert verification (lab use only) |
@@ -56,12 +56,15 @@ The server reads configuration from environment variables:
 | `MCP_TRANSPORT` | No | `stdio` (default), `streamable-http`, or `sse` |
 | `MCP_HOST` | No | Bind host for HTTP transport (default `127.0.0.1`; the Docker image sets `0.0.0.0`) |
 | `MCP_PORT` | No | Port for HTTP transport (default `8000`) |
-| `MCP_API_KEY` | HTTP only | Required for HTTP transport — clients must send `Authorization: Bearer <value>`. The server refuses to start without it |
-| `MCP_ALLOW_UNAUTHENTICATED` | No | Set to `true` to run HTTP transport without `MCP_API_KEY` (not recommended) |
+| `MCP_API_KEY` | HTTP only† | Single-user HTTP: one shared key clients send as `Authorization: Bearer <value>`. Everyone using it shares one Horizon session — don't share it between people |
+| `MCP_USERS_FILE` | HTTP only† | Multi-user HTTP: JSON file of per-user key hashes, managed with `horizon-mcp-keys`. Each key gets its own Horizon session. Requires `HORIZON_BASE_URL`. See [Multi-user HTTP](#multi-user-http) |
+| `MCP_ALLOW_UNAUTHENTICATED` | No | Set to `true` to run HTTP transport without a key (not recommended; not allowed with `MCP_USERS_FILE`) |
 | `MCP_ALLOWED_HOSTS` | No | Comma-separated host names the HTTP server answers to (Host header check). Defaults to loopback names when bound to loopback; unchecked otherwise |
 | `MCP_ALLOWED_ORIGINS` | No | Comma-separated browser origins allowed to call the HTTP server, e.g. `https://app.example.com`. Loopback origins are allowed when bound to loopback |
 
 *`HORIZON_ACCESS_TOKEN` can also be obtained at runtime by calling the `horizon_login` tool, or from `HORIZON_REFRESH_TOKEN`.
+
+†HTTP transport needs exactly one of `MCP_API_KEY` or `MCP_USERS_FILE`; the server refuses to start with neither or both.
 
 ## Usage
 
@@ -95,7 +98,16 @@ claude mcp add horizon \
 
 ### HTTP (remote)
 
-HTTP transport requires `MCP_API_KEY` — clients authenticate with `Authorization: Bearer <MCP_API_KEY>`, and the server refuses to start without it (set `MCP_ALLOW_UNAUTHENTICATED=true` to override, not recommended). It binds to `127.0.0.1` by default; set `MCP_HOST=0.0.0.0` to accept connections from other machines.
+HTTP transport requires an API key, in one of two modes. The server refuses to start with neither (set `MCP_ALLOW_UNAUTHENTICATED=true` to override, not recommended) or both:
+
+| Mode | Set | Whose Horizon session each call uses | Use for |
+|---|---|---|---|
+| Single-user | `MCP_API_KEY` | One shared session, identity `default` | One person running their own server |
+| Multi-user | `MCP_USERS_FILE` | The caller's own session, identity = their user name | A server shared by several people — see [Multi-user HTTP](#multi-user-http) |
+
+(stdio always serves one local user, identity `local`.) The server binds to `127.0.0.1` by default; set `MCP_HOST=0.0.0.0` to accept connections from other machines.
+
+Single-user example:
 
 ```bash
 MCP_TRANSPORT=streamable-http \
@@ -115,11 +127,48 @@ claude mcp add --transport http horizon http://your-server:8000/mcp \
   --header "Authorization: Bearer your-secret-key"
 ```
 
-stdio transport always skips authentication regardless of `MCP_API_KEY`.
+stdio transport always skips authentication regardless of `MCP_API_KEY` (and refuses to start with `MCP_USERS_FILE`, which only applies to HTTP).
 
 The HTTP server also checks `Host` and `Origin` headers to block DNS-rebinding attacks from web pages. When bound to loopback it only answers to `localhost`/`127.0.0.1`/`::1`; behind a reverse proxy or on a named host, list your host names in `MCP_ALLOWED_HOSTS`. Browser-based clients from other origins must be listed in `MCP_ALLOWED_ORIGINS`; non-browser MCP clients send no `Origin` and are unaffected.
 
-> **HTTP transport security:** For any non-localhost deployment, place the server behind a reverse proxy (nginx, Caddy, Traefik) that enforces TLS. Each user should run a separate server instance with their own `HORIZON_ACCESS_TOKEN` and `MCP_API_KEY` to maintain session isolation.
+> **HTTP transport security:** For any non-localhost deployment, place the server behind a reverse proxy (nginx, Caddy, Traefik) that enforces TLS — API keys and Horizon passwords travel in these requests. With `MCP_API_KEY`, everyone holding the key acts as the same Horizon user, so give it to one person only; for several people use [multi-user mode](#multi-user-http) (or one instance per person).
+
+### Multi-user HTTP
+
+One server can serve several people, each with their own API key and their own Horizon session. Every Horizon call runs with the caller's own Horizon login, so Horizon's RBAC applies per person and the audit log names who did what.
+
+**1. Issue a key per person** with `horizon-mcp-keys` (installed with the server). It prints the new key **once** and stores only its SHA-256 hash, in a file readable only by its owner (mode `0600`):
+
+```bash
+horizon-mcp-keys add alice --file /etc/horizon-mcp/users.json   # prints alice's key once
+horizon-mcp-keys add bob --file /etc/horizon-mcp/users.json
+horizon-mcp-keys list --file /etc/horizon-mcp/users.json        # names only
+horizon-mcp-keys remove bob --file /etc/horizon-mcp/users.json  # revokes bob's key
+```
+
+`--file` defaults to `$MCP_USERS_FILE`. Hand each key to its owner over a secure channel. A key can't be recovered: to replace a lost one, remove and re-add the user. User names are 1–64 letters, digits, `.`, `_`, `@` or `-` (`local` and `default` are reserved). The file looks like `{"users": [{"name": "alice", "key_sha256": "<64 hex>", "created": "..."}]}`.
+
+**2. Start the server** with `MCP_USERS_FILE` and `HORIZON_BASE_URL`:
+
+```bash
+MCP_TRANSPORT=streamable-http \
+MCP_USERS_FILE=/etc/horizon-mcp/users.json \
+HORIZON_BASE_URL=https://horizon.corp.example.com \
+horizon-mcp
+```
+
+The server reads the file at startup: **restart it after adding or removing users**. It refuses to start if the file is missing or invalid (bad JSON, no users, duplicate names or hashes, anything that isn't a 64-hex hash), if `MCP_API_KEY` is also set, if `HORIZON_ACCESS_TOKEN` or `HORIZON_REFRESH_TOKEN` is set (that would be one token shared by everyone), if `HORIZON_BASE_URL` is missing (so every login goes to the configured server), or with `MCP_ALLOW_UNAUTHENTICATED=true`.
+
+**3. Each person configures their client with their own key**, e.g. for Claude Code:
+
+```bash
+claude mcp add --transport http horizon https://mcp.corp.example.com/mcp \
+  --header "Authorization: Bearer <your-own-key>"
+```
+
+**4. Each person signs in with their own AD account** by calling `horizon_login` (see [Getting an Access Token](#getting-an-access-token)). Until they do, their tool calls fail with *"call horizon_login"*, even if other people are signed in.
+
+What's isolated per key: the Horizon access and refresh tokens, the HTTP client, automatic token refresh (one user's expiry or failed refresh never touches another's session), `horizon_logout` (ends only the caller's session), confirmation prompts (sent to the calling client only), `HORIZON_EXPOSE_TOKENS` (returns only the caller's tokens), the audit log's `user` field, and MCP sessions (an MCP session ID can't be reused with a different key). A request without a valid key is rejected with HTTP 401 before it reaches any tool. Sessions live in memory: after a restart everyone signs in again.
 
 ### Docker
 
@@ -134,13 +183,13 @@ docker run -d -p 8000:8000 \
   horizon-mcp
 ```
 
-Or with `docker-compose.yml` (reads `HORIZON_BASE_URL`, `HORIZON_ACCESS_TOKEN`, `HORIZON_REFRESH_TOKEN`, `HORIZON_VERIFY_SSL`, and `MCP_API_KEY` from your shell environment or a `.env` file):
+Or with `docker-compose.yml` (reads `HORIZON_BASE_URL`, `HORIZON_ACCESS_TOKEN`, `HORIZON_REFRESH_TOKEN`, `HORIZON_VERIFY_SSL`, `MCP_API_KEY` and `MCP_USERS_FILE` from your shell environment or a `.env` file; for multi-user, mount the users file into the container as shown in the file's comments):
 
 ```bash
 HORIZON_BASE_URL=https://horizon.corp.example.com MCP_API_KEY=your-secret-key docker compose up -d
 ```
 
-`MCP_API_KEY` is required — both `docker-compose.yml` and the server itself refuse to start without it, because a containerized deployment is reachable over the network by definition, so leaving the endpoint unauthenticated is not a safe default (see [Security Notes](#security-notes)). Point your MCP client at `http://host:8000/mcp` with the matching `Authorization: Bearer` header as shown above.
+An API key is required — the server refuses to start without `MCP_API_KEY` or `MCP_USERS_FILE`, because a containerized deployment is reachable over the network by definition, so leaving the endpoint unauthenticated is not a safe default (see [Security Notes](#security-notes)). Point your MCP client at `http://host:8000/mcp` with the matching `Authorization: Bearer` header as shown above.
 
 ## Getting an Access Token
 
@@ -154,11 +203,11 @@ Call horizon_login with:
   base_url: https://horizon.corp.example.com
 ```
 
-The new session is active immediately. The server keeps the access and refresh tokens itself — the tool returns only their first 8 characters (`access_token_hint`, `refresh_token_hint`), so the tokens never enter the conversation.
+The new session is active immediately (on a multi-user server, for you only). The server keeps the access and refresh tokens itself — the tool returns only their first 8 characters (`access_token_hint`, `refresh_token_hint`), so the tokens never enter the conversation.
 
 When the access token expires (~8 hours) and Horizon answers a request with HTTP 401, the server refreshes it with the stored refresh token and retries the request once. If there's no refresh token, or Horizon rejects it, the tool call fails with a message asking you to call `horizon_login` again. `horizon_refresh_token` and `horizon_logout` use the stored refresh token when you don't pass one.
 
-**Persisting the session across restarts:** tokens held in the server are lost when it restarts. To keep a session, set `HORIZON_EXPOSE_TOKENS=true` on the server, call `horizon_login` once — it then returns the full `access_token` and `refresh_token` — and put them in your MCP client config as `HORIZON_ACCESS_TOKEN` and `HORIZON_REFRESH_TOKEN` (the refresh token alone is enough; the server gets an access token from it on the first call). Then unset `HORIZON_EXPOSE_TOKENS`.
+**Persisting the session across restarts** (single-user modes only; on a multi-user server everyone signs in again after a restart): tokens held in the server are lost when it restarts. To keep a session, set `HORIZON_EXPOSE_TOKENS=true` on the server, call `horizon_login` once — it then returns the full `access_token` and `refresh_token` — and put them in your MCP client config as `HORIZON_ACCESS_TOKEN` and `HORIZON_REFRESH_TOKEN` (the refresh token alone is enough; the server gets an access token from it on the first call). Then unset `HORIZON_EXPOSE_TOKENS`.
 
 > **Security:** Treat both tokens as passwords. If you expose them, clear them from the conversation after copying them to your config. Do not commit tokens to version control.
 
@@ -460,13 +509,13 @@ These tools, plus the `update_*` tools and `assign_machine_users`, also carry `d
 
 ### Audit log
 
-The server writes one JSON line per event to **stderr**, or appends to the file named by `HORIZON_AUDIT_LOG`. It never writes to stdout, which stdio transport uses for the MCP protocol. Each line has a UTC timestamp (`ts`), the `event` type and the `tool` that triggered it:
+The server writes one JSON line per event to **stderr**, or appends to the file named by `HORIZON_AUDIT_LOG`. It never writes to stdout, which stdio transport uses for the MCP protocol. Each line has a UTC timestamp (`ts`), the `event` type, the `user` it was made for (the user name in multi-user mode, `default` with `MCP_API_KEY`, `local` on stdio) and the `tool` that triggered it:
 
 - `confirmation` — every confirmation decision: the `summary` shown to the user and the `outcome` (`approved`, `cancelled`, `refused` because the client can't prompt, or in `flag` mode `approved` / `missing_confirm`).
 - `api_request` — every POST, PUT and DELETE sent to Horizon: `method`, `path`, and the HTTP `status` (or the exception type as `error`), plus `retried` if the token was refreshed first. GETs aren't logged.
 - `auth` — login, logout and token refresh (manual or automatic) and their status.
 
-Request bodies, passwords, usernames, tokens and `Authorization` headers are never logged.
+Request bodies, passwords, AD usernames, tokens, API keys (and their hashes) and `Authorization` headers are never logged.
 
 ## Running Tests
 
@@ -598,8 +647,9 @@ Versions follow [Semantic Versioning](https://semver.org/) and are tagged `vX.Y.
 - In production, always keep `HORIZON_VERIFY_SSL=true` (default).
 - Passwords passed to `horizon_login` are typed as `SecretStr` and masked in server-side logs.
 - Access and refresh tokens stay inside the server process: login and refresh return only 8-character hints, and expired tokens are renewed automatically, so tokens don't pass through the conversation. `HORIZON_EXPOSE_TOKENS=true` returns the full tokens for copying into config — leave it off otherwise, and treat the tokens as passwords.
-- The server holds one Horizon session (from `HORIZON_ACCESS_TOKEN` / `HORIZON_REFRESH_TOKEN` or the last `horizon_login`) shared by every client connected to it. For multiple users, run a separate instance per user with its own tokens and `MCP_API_KEY`, behind a reverse proxy that enforces TLS.
+- With stdio or `MCP_API_KEY` the server holds **one** Horizon session (from `HORIZON_ACCESS_TOKEN` / `HORIZON_REFRESH_TOKEN` or the last `horizon_login`), shared by every client using that key, so don't share the key between people. For several people, use [multi-user mode](#multi-user-http) (`MCP_USERS_FILE`): each person has their own key and their own Horizon session, so Horizon RBAC and the audit log apply per person. Running a separate instance per person also works. Either way, put the server behind a reverse proxy that enforces TLS.
+- Per-user keys are 256-bit random values. The users file stores only their SHA-256 hashes, and the server compares a presented key against every hash in constant time. Keep the file owner-readable (the CLI writes it with mode `0600`) and restart the server after changing it.
 - Destructive-operation decisions and every mutating Horizon request are recorded in an [audit log](#audit-log) (stderr or `HORIZON_AUDIT_LOG`), without request bodies or secrets.
 - Destructive operations ask the user to confirm in the MCP client and are refused if the client can't prompt — see [Confirming destructive operations](#confirming-destructive-operations).
-- HTTP transport requires `MCP_API_KEY`, binds to `127.0.0.1` by default, and validates `Host`/`Origin` headers against DNS rebinding.
+- HTTP transport requires `MCP_API_KEY` or `MCP_USERS_FILE`, binds to `127.0.0.1` by default, and validates `Host`/`Origin` headers against DNS rebinding.
 - IDs passed to tools are percent-encoded before being placed in Horizon API paths, so an ID can't redirect a request to a different endpoint.

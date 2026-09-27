@@ -64,14 +64,13 @@ def test_resolve_base_url_raises_when_neither_provided():
 
 # ── horizon_login ──────────────────────────────────────────────────────────────
 
-async def test_login_sets_access_token_in_env(tools):
+async def test_login_sets_the_session_access_token(tools):
     mock_class, _ = make_http_client({
         "access_token": "tok-abc123",
         "refresh_token": "ref-xyz",
     })
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         await tools["horizon_login"](
             username="jsmith",
             password=SecretStr("secret"),
@@ -79,13 +78,14 @@ async def test_login_sets_access_token_in_env(tools):
             base_url="https://horizon.test.example.com",
         )
 
-    assert os.environ.get("HORIZON_ACCESS_TOKEN") == "tok-abc123"
+    assert client.current_session().access_token == "tok-abc123"
+    # os.environ is no longer the live token store.
+    assert os.environ.get("HORIZON_ACCESS_TOKEN") != "tok-abc123"
 
 
 async def _login(tools, tokens):
     mock_class, _ = make_http_client(tokens)
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         return await tools["horizon_login"](
             username="jsmith",
             password=SecretStr("secret"),
@@ -136,8 +136,7 @@ async def test_login_sends_secret_value_not_repr(tools):
         "access_token": "tok", "refresh_token": "ref",
     })
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         await tools["horizon_login"](
             username="jsmith",
             password=SecretStr("my-real-password"),
@@ -154,8 +153,7 @@ async def test_login_sends_secret_value_not_repr(tools):
 async def test_login_raises_on_non_200(tools):
     mock_class, _ = make_http_client({"error_message": "Invalid credentials"}, status_code=401)
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         with pytest.raises(ValueError, match="Login failed"):
             await tools["horizon_login"](
                 username="jsmith",
@@ -179,7 +177,6 @@ async def test_login_rejects_base_url_mismatch_without_sending_credentials(tools
     mock_class, mock_http = make_http_client({"access_token": "tok", "refresh_token": "ref"})
 
     with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"), \
          patch.dict(os.environ, {"HORIZON_BASE_URL": "https://horizon.test.example.com"}):
         with pytest.raises(ValueError, match="does not match"):
             await tools["horizon_login"](
@@ -194,18 +191,17 @@ async def test_login_rejects_base_url_mismatch_without_sending_credentials(tools
 
 # ── horizon_refresh_token ──────────────────────────────────────────────────────
 
-async def test_refresh_token_updates_env_and_returns_hint(tools, monkeypatch):
+async def test_refresh_token_updates_session_and_returns_hint(tools, monkeypatch):
     monkeypatch.delenv("HORIZON_EXPOSE_TOKENS", raising=False)
     mock_class, _ = make_http_client({"access_token": "new-tok-999abc"})
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         result = await tools["horizon_refresh_token"](
             refresh_token=SecretStr("old-refresh"),
             base_url="https://horizon.test.example.com",
         )
 
-    assert os.environ.get("HORIZON_ACCESS_TOKEN") == "new-tok-999abc"
+    assert client.current_session().access_token == "new-tok-999abc"
     assert "access_token" not in result
     assert "new-tok-999abc" not in str(result)
     assert result["access_token_hint"] == "new-tok-…"
@@ -218,8 +214,7 @@ async def test_refresh_token_returns_full_token_when_exposed(tools, monkeypatch)
     monkeypatch.setenv("HORIZON_EXPOSE_TOKENS", "true")
     mock_class, _ = make_http_client({"access_token": "new-tok-999abc"})
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         result = await tools["horizon_refresh_token"](refresh_token=SecretStr("old-refresh"))
 
     assert result["access_token"] == "new-tok-999abc"
@@ -230,13 +225,12 @@ async def test_refresh_token_defaults_to_stored_token(tools):
     client.set_refresh_token("stored-refresh")
     mock_class, mock_http = make_http_client({"access_token": "new-tok-999abc"})
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         result = await tools["horizon_refresh_token"]()
 
     assert mock_http.post.call_args.kwargs["json"] == {"refresh_token": "stored-refresh"}
     assert result["status"] == "token_refreshed"
-    assert os.environ.get("HORIZON_ACCESS_TOKEN") == "new-tok-999abc"
+    assert client.current_session().access_token == "new-tok-999abc"
 
 
 async def test_refresh_token_without_stored_token_asks_for_login(tools):
@@ -252,8 +246,7 @@ async def test_refresh_token_without_stored_token_asks_for_login(tools):
 async def test_refresh_token_sends_secret_value(tools):
     mock_class, mock_http = make_http_client({"access_token": "tok"})
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         await tools["horizon_refresh_token"](
             refresh_token=SecretStr("my-refresh-token"),
             base_url="https://horizon.test.example.com",
@@ -267,8 +260,7 @@ async def test_refresh_token_sends_secret_value(tools):
 async def test_refresh_token_raises_on_failure(tools):
     mock_class, _ = make_http_client({"error": "expired"}, status_code=401)
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         with pytest.raises(ValueError, match="Token refresh failed"):
             await tools["horizon_refresh_token"](
                 refresh_token=SecretStr("bad"),
@@ -280,7 +272,6 @@ async def test_refresh_token_rejects_base_url_mismatch_without_sending_token(too
     mock_class, mock_http = make_http_client({"access_token": "tok"})
 
     with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"), \
          patch.dict(os.environ, {"HORIZON_BASE_URL": "https://horizon.test.example.com"}):
         with pytest.raises(ValueError, match="does not match"):
             await tools["horizon_refresh_token"](
@@ -293,34 +284,32 @@ async def test_refresh_token_rejects_base_url_mismatch_without_sending_token(too
 
 # ── horizon_logout ─────────────────────────────────────────────────────────────
 
-async def test_logout_clears_access_token_env(tools):
-    os.environ["HORIZON_ACCESS_TOKEN"] = "existing-token"
+async def test_logout_clears_the_session(tools):
+    client.current_session().access_token = "existing-token"
     mock_class, _ = make_http_client({}, status_code=200)
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         result = await tools["horizon_logout"](
             refresh_token=SecretStr("ref-tok"),
             base_url="https://horizon.test.example.com",
         )
 
-    assert os.environ.get("HORIZON_ACCESS_TOKEN") is None
+    assert client.current_session().access_token is None
     assert result == {"logged_out": True}
 
 
 async def test_logout_defaults_to_stored_token_and_forgets_it(tools):
-    os.environ["HORIZON_ACCESS_TOKEN"] = "existing-token"
+    client.current_session().access_token = "existing-token"
     client.set_refresh_token("stored-refresh")
     mock_class, mock_http = make_http_client({}, status_code=200)
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         result = await tools["horizon_logout"]()
 
     assert mock_http.post.call_args.kwargs["json"] == {"refresh_token": "stored-refresh"}
     assert result == {"logged_out": True}
     assert client.get_refresh_token() is None
-    assert os.environ.get("HORIZON_ACCESS_TOKEN") is None
+    assert client.current_session().access_token is None
 
 
 async def test_logout_without_stored_token_asks_for_login(tools):
@@ -336,8 +325,7 @@ async def test_logout_without_stored_token_asks_for_login(tools):
 async def test_logout_raises_on_failure(tools):
     mock_class, _ = make_http_client({"error": "already logged out"}, status_code=400)
 
-    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"):
+    with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class):
         with pytest.raises(ValueError, match="Logout failed"):
             await tools["horizon_logout"](
                 refresh_token=SecretStr("ref"),
@@ -349,7 +337,6 @@ async def test_logout_rejects_base_url_mismatch_without_sending_token(tools):
     mock_class, mock_http = make_http_client({}, status_code=200)
 
     with patch("horizon_mcp.tools.auth.httpx.AsyncClient", mock_class), \
-         patch("horizon_mcp.tools.auth.reset_client"), \
          patch.dict(os.environ, {"HORIZON_BASE_URL": "https://horizon.test.example.com"}):
         with pytest.raises(ValueError, match="does not match"):
             await tools["horizon_logout"](
