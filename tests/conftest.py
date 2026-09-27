@@ -64,6 +64,12 @@ def confirmations(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def no_stored_refresh_token(monkeypatch):
-    """Start every test without a server-side refresh token (it's module state in client.py)."""
-    monkeypatch.setattr("horizon_mcp.client._refresh_token", None)
+async def fresh_sessions():
+    """Start every test in single-user (stdio) mode with only the env access token seeded
+    and no server-side refresh token, and close whatever clients the test created."""
+    from horizon_mcp import client
+
+    client.configure(multi_user=False, access_token=os.environ.get("HORIZON_ACCESS_TOKEN") or None)
+    yield
+    await client.close_all()
+    client.configure(multi_user=False, access_token=os.environ.get("HORIZON_ACCESS_TOKEN") or None)

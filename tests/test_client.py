@@ -23,11 +23,10 @@ from horizon_mcp.client import (
 )
 
 
-@pytest.fixture(autouse=True)
-async def clean_client():
-    await reset_client()
-    yield
-    await reset_client()
+def _session(token=None):
+    s = client_mod.current_session()
+    s.access_token = token
+    return s
 
 
 def make_response(json_data=None, text="", status_code=400):
@@ -201,21 +200,37 @@ async def test_api_post_raises_before_dispatch_on_traversal(monkeypatch):
 # ── get_client ─────────────────────────────────────────────────────────────────
 
 async def test_get_client_raises_without_base_url():
-    with patch.dict(os.environ, {"HORIZON_BASE_URL": "", "HORIZON_ACCESS_TOKEN": "tok"}):
+    _session("tok")
+    with patch.dict(os.environ, {"HORIZON_BASE_URL": ""}):
         with pytest.raises(ValueError, match="HORIZON_BASE_URL"):
             await get_client()
 
 
 async def test_get_client_raises_without_token():
-    with patch.dict(os.environ, {"HORIZON_BASE_URL": "https://h.test", "HORIZON_ACCESS_TOKEN": ""}):
-        with pytest.raises(ValueError, match="HORIZON_ACCESS_TOKEN"):
+    _session(None)
+    with patch.dict(os.environ, {"HORIZON_BASE_URL": "https://h.test"}):
+        with pytest.raises(ValueError, match="not signed in.*horizon_login"):
             await get_client()
 
 
+async def test_get_client_ignores_the_environment_token_after_startup():
+    _session(None)
+    with patch.dict(os.environ, {"HORIZON_BASE_URL": "https://h.test", "HORIZON_ACCESS_TOKEN": "env-tok"}):
+        with pytest.raises(ValueError, match="horizon_login"):
+            await get_client()
+
+
+async def test_client_carries_no_credentials_of_its_own():
+    _session("test-token")
+    with patch.dict(os.environ, {"HORIZON_BASE_URL": "https://horizon.test.example.com"}):
+        c = await get_client()
+    assert "authorization" not in {k.lower() for k in c.headers}
+
+
 async def test_get_client_returns_same_instance_on_repeated_calls():
+    _session("test-token")
     with patch.dict(os.environ, {
         "HORIZON_BASE_URL": "https://horizon.test.example.com",
-        "HORIZON_ACCESS_TOKEN": "test-token",
         "HORIZON_VERIFY_SSL": "false",
     }):
         client1 = await get_client()
@@ -236,9 +251,9 @@ def _transport_verifies_certs(client: httpx.AsyncClient) -> bool:
 
 
 async def test_get_client_transport_actually_disables_verification_when_configured():
+    _session("test-token")
     with patch.dict(os.environ, {
         "HORIZON_BASE_URL": "https://horizon.test.example.com",
-        "HORIZON_ACCESS_TOKEN": "test-token",
         "HORIZON_VERIFY_SSL": "false",
     }):
         client = await get_client()
@@ -248,9 +263,9 @@ async def test_get_client_transport_actually_disables_verification_when_configur
 
 
 async def test_get_client_transport_verifies_certs_by_default():
+    _session("test-token")
     with patch.dict(os.environ, {
         "HORIZON_BASE_URL": "https://horizon.test.example.com",
-        "HORIZON_ACCESS_TOKEN": "test-token",
     }, clear=False):
         os.environ.pop("HORIZON_VERIFY_SSL", None)
         client = await get_client()
@@ -265,9 +280,9 @@ async def test_reset_client_idempotent():
 
 
 async def test_reset_client_forces_new_instance():
+    _session("test-token")
     with patch.dict(os.environ, {
         "HORIZON_BASE_URL": "https://horizon.test.example.com",
-        "HORIZON_ACCESS_TOKEN": "test-token",
         "HORIZON_VERIFY_SSL": "false",
     }):
         client1 = await get_client()
@@ -302,9 +317,9 @@ def _refresh_endpoint(json_data, status_code=200, delay=0.0):
 
 
 def _horizon(monkeypatch, valid_token="new-token"):
-    """Mock shared client that only accepts valid_token (the env token at send time)."""
-    async def request(method, path, **kwargs):
-        sent_with = os.environ.get("HORIZON_ACCESS_TOKEN")
+    """Mock client that only accepts valid_token (the Authorization header actually sent)."""
+    async def request(method, path, headers=None, **kwargs):
+        sent_with = (headers or {}).get("Authorization", "").removeprefix("Bearer ")
         await asyncio.sleep(0.01)  # let concurrent callers all send before any refresh lands
         return _resp(200, {"ok": True}) if sent_with == valid_token else _resp(401, {"error_message": "expired"})
 
@@ -316,7 +331,7 @@ def _horizon(monkeypatch, valid_token="new-token"):
 
 @pytest.fixture
 def expired_session(monkeypatch):
-    monkeypatch.setenv("HORIZON_ACCESS_TOKEN", "old-token")
+    _session("old-token")
     monkeypatch.setenv("HORIZON_BASE_URL", "https://horizon.test.example.com")
 
 
@@ -333,7 +348,7 @@ async def test_401_refreshes_token_and_retries_once(monkeypatch, expired_session
     http.post.assert_awaited_once()
     assert http.post.call_args.args[0] == "https://horizon.test.example.com/rest/refresh"
     assert http.post.call_args.kwargs["json"] == {"refresh_token": "stored-refresh"}
-    assert os.environ["HORIZON_ACCESS_TOKEN"] == "new-token"
+    assert client_mod.current_session().access_token == "new-token"
 
 
 async def test_401_refresh_keeps_rotated_refresh_token(monkeypatch, expired_session):
@@ -416,7 +431,7 @@ async def test_401_without_refresh_token_raises_clear_error(monkeypatch, expired
 
 
 async def test_missing_access_token_is_obtained_from_refresh_token(monkeypatch, expired_session):
-    monkeypatch.delenv("HORIZON_ACCESS_TOKEN")
+    _session(None)
     client_mod.set_refresh_token("stored-refresh")
     horizon = _horizon(monkeypatch)
     mock_class, http = _refresh_endpoint({"access_token": "new-token"})

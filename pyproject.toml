@@ -32,6 +32,7 @@ dev = [
 
 [project.scripts]
 horizon-mcp = "horizon_mcp.__main__:main"
+horizon-mcp-keys = "horizon_mcp.keys:main_cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/horizon_mcp"]

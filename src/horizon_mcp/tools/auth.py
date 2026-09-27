@@ -6,15 +6,9 @@ import httpx
 from fastmcp import FastMCP
 from pydantic import SecretStr
 
-from .. import audit
-from ..client import (
-    get_refresh_token,
-    refresh_access_token,
-    reset_client,
-    set_refresh_token,
-    store_tokens,
-    verify_ssl,
-)
+from .. import audit, identity
+from .. import client as hz
+from ..client import HorizonSession, current_session, end_session, refresh_access_token, store_tokens
 from ._annotations import ADDITIVE
 
 
@@ -51,14 +45,24 @@ def _expose_tokens() -> bool:
     return os.environ.get("HORIZON_EXPOSE_TOKENS", "").strip().lower() == "true"
 
 
+def _persist_note(single_user_note: str) -> str:
+    if identity.is_multi_user():
+        # Startup refuses HORIZON_ACCESS_TOKEN / HORIZON_REFRESH_TOKEN in multi-user mode.
+        return (
+            "Session is active for you on this server. On a multi-user server it can't be persisted in "
+            "the server's config; sign in again with horizon_login after a restart."
+        )
+    return single_user_note
+
+
 def _hint(token: str | None) -> str:
     return f"{token[:8]}…" if token else ""
 
 
-def _stored_refresh_token(refresh_token: SecretStr | None) -> str:
-    value = refresh_token.get_secret_value() if refresh_token is not None else get_refresh_token()
+def _stored_refresh_token(session: HorizonSession, refresh_token: SecretStr | None) -> str:
+    value = refresh_token.get_secret_value() if refresh_token is not None else session.refresh_token
     if not value:
-        raise ValueError("No refresh token is stored on the server. Call horizon_login to sign in.")
+        raise ValueError("No refresh token is stored on the server for you. Call horizon_login to sign in.")
     return value
 
 
@@ -74,17 +78,20 @@ def register(mcp: FastMCP) -> None:
             "Defaults to HORIZON_BASE_URL env var if not provided.",
         ] = "",
     ) -> dict:
-        """Authenticate to Horizon and activate the session for this server.
+        """Authenticate to Horizon and activate your session on this server.
 
         The tokens are kept server-side: subsequent tool calls work immediately, and when
         the access token expires (~8 hours) the server renews it automatically with the
-        refresh token. Only short token hints are returned.
+        refresh token. Only short token hints are returned. On a multi-user server the
+        session is yours alone: other users sign in with their own accounts.
         """
+        # Resolve the caller first: an unauthenticated request never gets as far as Horizon.
+        session = current_session()
         url = _resolve_base_url(base_url)
 
         status: int | str = "error"
         try:
-            async with httpx.AsyncClient(verify=verify_ssl(), timeout=15.0) as http:
+            async with httpx.AsyncClient(transport=hz.new_transport(), timeout=15.0) as http:
                 resp = await http.post(
                     f"{url}/rest/login",
                     json={"domain": domain, "username": username, "password": password.get_secret_value()},
@@ -102,11 +109,11 @@ def register(mcp: FastMCP) -> None:
 
         token = tokens["access_token"]
         refresh = tokens.get("refresh_token", "")
-        if not os.environ.get("HORIZON_BASE_URL"):
+        if not os.environ.get("HORIZON_BASE_URL"):  # single-user bootstrap; multi-user requires it
             os.environ["HORIZON_BASE_URL"] = url
         # A new login replaces any earlier refresh token, even with none.
-        set_refresh_token(refresh)
-        await store_tokens(token)
+        session.refresh_token = refresh or None
+        await store_tokens(token, session=session)
 
         result = {
             "status": "authenticated",
@@ -117,8 +124,8 @@ def register(mcp: FastMCP) -> None:
         }
         if _expose_tokens():
             result.update({
-                "note": "Session is active for this server. To persist it across restarts, set "
-                "HORIZON_ACCESS_TOKEN and HORIZON_REFRESH_TOKEN in your MCP client config.",
+                "note": _persist_note("Session is active for this server. To persist it across restarts, set "
+                                      "HORIZON_ACCESS_TOKEN and HORIZON_REFRESH_TOKEN in your MCP client config."),
                 "SECURITY": "Treat these tokens as passwords. Clear them from the conversation after copying "
                 "to your config. Do not commit to version control.",
                 "access_token": token,
@@ -140,15 +147,16 @@ def register(mcp: FastMCP) -> None:
 
         Rarely needed: the server already refreshes an expired access token automatically.
         """
+        session = current_session()
         url = _resolve_base_url(base_url)
-        refresh = _stored_refresh_token(refresh_token)
+        refresh = _stored_refresh_token(session, refresh_token)
 
         result = await refresh_access_token(url, refresh)
 
         # Keep the refresh token that worked (a caller-supplied one becomes the stored one),
         # unless the server rotated it.
-        set_refresh_token(refresh)
-        await store_tokens(result["access_token"], result.get("refresh_token"))
+        session.refresh_token = refresh
+        await store_tokens(result["access_token"], result.get("refresh_token"), session=session)
 
         token = result["access_token"]
         out = {
@@ -158,8 +166,8 @@ def register(mcp: FastMCP) -> None:
         }
         if _expose_tokens():
             out.update({
-                "note": "New access token is now active for this server session. Update HORIZON_ACCESS_TOKEN "
-                "in your MCP client config if you want to persist it.",
+                "note": _persist_note("New access token is now active for this server session. Update "
+                                      "HORIZON_ACCESS_TOKEN in your MCP client config if you want to persist it."),
                 "SECURITY": "Treat this token as a password. Clear it from the conversation after copying.",
                 "access_token": token,
             })
@@ -175,15 +183,16 @@ def register(mcp: FastMCP) -> None:
             str, "Horizon server URL. Defaults to HORIZON_BASE_URL env var."
         ] = "",
     ) -> dict:
-        """Invalidate the current Horizon session (access + refresh tokens)."""
+        """Invalidate your Horizon session (access + refresh tokens). Other users' sessions are unaffected."""
+        session = current_session()
         url = _resolve_base_url(base_url)
-        refresh = _stored_refresh_token(refresh_token)
-        token = os.environ.get("HORIZON_ACCESS_TOKEN", "")
+        refresh = _stored_refresh_token(session, refresh_token)
+        token = session.access_token or ""
         headers = {"Authorization": f"Bearer {token}"} if token else {}
 
         status: int | str = "error"
         try:
-            async with httpx.AsyncClient(verify=verify_ssl(), timeout=15.0) as http:
+            async with httpx.AsyncClient(transport=hz.new_transport(), timeout=15.0) as http:
                 resp = await http.post(
                     f"{url}/rest/logout",
                     json={"refresh_token": refresh},
@@ -199,7 +208,5 @@ def register(mcp: FastMCP) -> None:
         finally:
             audit.record("auth", action="logout", status=status)
 
-        os.environ.pop("HORIZON_ACCESS_TOKEN", None)
-        set_refresh_token(None)
-        await reset_client()
+        await end_session(session)
         return {"logged_out": True}

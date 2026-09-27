@@ -4,9 +4,13 @@ One JSON object per line on the "horizon_mcp.audit" logger. Output goes to stder
 or to the file named by HORIZON_AUDIT_LOG — never stdout, which stdio transport
 uses for the MCP protocol itself.
 
+Every line names the identity it was made for ("user": the multi-user name from
+MCP_USERS_FILE, "default" for a single MCP_API_KEY, "local" for stdio; null when a
+multi-user request had no authenticated user).
+
 Callers pass only what's safe to keep: method, path, status, confirmation summary.
-Request bodies, tokens, passwords and headers are never passed in, so they can't
-end up in the log.
+Request bodies, tokens, API keys (or their hashes), passwords and headers are never
+passed in, so they can't end up in the log.
 """
 import contextvars
 import json
@@ -16,6 +20,8 @@ import sys
 from datetime import datetime, timezone
 
 from fastmcp.server.middleware import Middleware
+
+from . import identity
 
 logger = logging.getLogger("horizon_mcp.audit")
 logger.setLevel(logging.INFO)
@@ -67,9 +73,11 @@ def record(event: str, **fields) -> None:
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "event": event,
+        "user": None,
         "tool": _current_tool.get(),
         **fields,
     }
+    entry["user"] = identity.current_identity_or_none()  # after **fields, so no caller can override it
     logger.info(json.dumps(entry, default=str))
 
 
