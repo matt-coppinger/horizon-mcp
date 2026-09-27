@@ -50,6 +50,8 @@ DESTRUCTIVE = _flag("HZ_LIVE_DESTRUCTIVE")
 ROWS: list[dict] = []
 PROMPTS: list[dict] = []
 TOOLS: list[str] = []
+# Per-tool verdicts from the end-to-end lifecycle test ({tool: {"status", "detail"}}), for the report.
+COVERAGE: dict[str, dict] = {}
 _SERVER_LOG: Path | None = None
 
 
@@ -194,7 +196,8 @@ class Approver:
     cancelled, so a bug can never get an unintended destructive action approved.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, prompts: list[dict] | None = None) -> None:
+        self.prompts = PROMPTS if prompts is None else prompts
         self.ids: set[str] = set()
         self.noop_prefixes: list[str] = []
         self.restore_prefixes: list[str] = []
@@ -221,7 +224,7 @@ class Approver:
     async def __call__(self, message, response_type, params, context):
         ok = self._decide(message)
         self.seen.append((ok, message))
-        PROMPTS.append({"approved": ok, "message": redact(message)})
+        self.prompts.append({"approved": ok, "message": redact(message)})
         print(f"  [confirm → {PROCEED if ok else CANCEL}] {redact(message.splitlines()[0])}")
         return {"value": PROCEED if ok else CANCEL}
 
@@ -245,15 +248,24 @@ class LiveToolError(AssertionError):
 
 
 class Session:
-    def __init__(self, client: Client, group: str, approver: Approver) -> None:
+    def __init__(self, client: Client, group: str, approver: Approver, rows: list[dict] | None = None) -> None:
         self.client = client
         self.group = group
         self.approver = approver
+        self.rows = ROWS if rows is None else rows
 
     def record(self, label: str, status: str, summary: str, *, args=None, body=None, ms: int = 0) -> None:
-        ROWS.append(dict(group=self.group, tool=label, status=status, args=redact(args),
-                         ms=ms, summary=redact(summary), body=redact(body)))
+        self.rows.append(dict(group=self.group, tool=label, status=status, args=redact(args),
+                              ms=ms, summary=redact(summary), body=redact(body)))
         print(f"  {status:5} {label:48} {ms or '':>6}")
+
+    def mark_last(self, status: str, note: str | None = None) -> None:
+        """Re-label the row the last call recorded — e.g. an expected rejection as NA."""
+        row = self.rows[-1]
+        row["status"] = status
+        if note:
+            row["summary"] = redact(f"{note} — {row['summary']}")
+        print(f"  {'':5} └─ {status}: {redact(note or '')[:100]}")
 
     def skip(self, label: str, reason: str) -> None:
         self.record(label, "SKIP", reason)
@@ -323,15 +335,15 @@ async def live_session(group: str, approver: Approver | None = None, *, login: b
         if not TOOLS:
             TOOLS.extend(t.name for t in await client.list_tools())
         s = Session(client, group, approver)
-        refresh = ""
+        logged_in = False
         if login:
-            result = await s.call("horizon_login", credentials())
-            refresh = (result or {}).get("refresh_token", "")
+            await s.call("horizon_login", credentials())
+            logged_in = True
         try:
             yield s
         finally:
-            if refresh:
-                await s.attempt("horizon_logout", {"refresh_token": refresh})
+            if logged_in:  # the server holds the refresh token; logout needs no argument
+                await s.attempt("horizon_logout")
 
 
 async def poll(fn, *, timeout: float, interval: float = 10.0, what: str = "condition"):

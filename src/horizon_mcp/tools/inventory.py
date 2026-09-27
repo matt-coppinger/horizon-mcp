@@ -44,11 +44,21 @@ async def _label(path: str, resource_id: str) -> str:
 
 async def _created(list_path: str, name: str, kind: str, list_tool: str) -> dict:
     """Result for a create call. Horizon answers 201 with no body, so look the new item up by name."""
+    def _match(found: object) -> dict | None:
+        return next((i for i in found if isinstance(i, dict) and i.get("name") == name), None) \
+            if isinstance(found, list) else None
+
     try:
-        found = await api_get(list_path, {"filter": json.dumps({"type": "Equals", "name": "name", "value": name})})
+        match = _match(await api_get(list_path, {"filter": json.dumps({"type": "Equals", "name": "name", "value": name})}))
     except Exception:
-        found = None
-    match = next((i for i in found or [] if isinstance(i, dict) and i.get("name") == name), None)
+        match = None
+    if match is None:
+        # Verified live: filtering farms by name returned nothing for a farm that existed,
+        # so fall back to an unfiltered list and match the exact name here.
+        try:
+            match = _match(await api_get(list_path, {"size": 1000}))
+        except Exception:
+            match = None
     if match:
         return {"success": True, "id": match.get("id"), "name": name}
     return {
@@ -596,7 +606,16 @@ def register(mcp: FastMCP) -> None:
             "get_application_pool, modify the relevant fields, and pass the result here.",
         ],
     ) -> dict:
-        """Update an existing application pool's configuration."""
+        """Update an existing application pool's configuration.
+
+        Horizon returns supported_file_types_data with both its auto-discovered file_types and
+        enable_auto_update_file_types=true, then rejects that combination on update ("file_types
+        cannot be set when enable_auto_update_file_types is enabled", verified on 2606). So when
+        auto-update is on, file_types is dropped here: Horizon manages that list itself.
+        """
+        file_types = spec.get("supported_file_types_data")
+        if isinstance(file_types, dict) and file_types.get("enable_auto_update_file_types") and "file_types" in file_types:
+            spec = {**spec, "supported_file_types_data": {k: v for k, v in file_types.items() if k != "file_types"}}
         result = await api_put(f"/inventory/v1/application-pools/{seg(pool_id)}", spec)
         return result or {"success": True, "pool_id": pool_id}
 

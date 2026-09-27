@@ -24,10 +24,9 @@ from .harness import (
     Session,
     by_name,
     live_session,
-    pick,
     poll,
 )
-from .sweep import find_host_or_cluster
+from .specs import farm_spec, resolve_placement
 
 pytestmark = [
     pytest.mark.skipif(not (WRITES and DESTRUCTIVE),
@@ -37,57 +36,11 @@ pytestmark = [
 ]
 
 
-def _need(value, what: str):
-    if not value:
-        pytest.fail(f"Could not resolve {what} for the test farm — set the matching HZ_* override")
-    return value
-
-
 async def _farm_spec(s: Session, name: str, tag: str) -> dict:
-    vc = _need(pick(await s.call("list_virtual_centers"), "HZ_VCENTER"), "a vCenter")
-    v = {"vcenter_id": vc["id"]}
-    dc = _need(pick(await s.call("list_datacenters", v), "HZ_DATACENTER"), "a datacenter")
-    hc = _need(find_host_or_cluster(await s.call("list_hosts_or_clusters", {**v, "datacenter_id": dc["id"]}),
-                                    os.environ.get("HZ_CLUSTER")), "a host or cluster")
-    hcv = {**v, "host_or_cluster_id": hc["id"]}
-    rp = _need(pick(await s.call("list_resource_pools", hcv), "HZ_RESOURCE_POOL"), "a resource pool")
-    folder = _need(pick(await s.call("list_vm_folders", {**v, "datacenter_id": dc["id"]}), "HZ_VM_FOLDER"),
-                   "a VM folder")
-    ds = _need(pick(await s.call("list_datastores", hcv), "HZ_DATASTORE"), "a datastore")
-    vm = _need(pick(await s.call("list_base_vms", v), "HZ_BASE_VM"), "HZ_BASE_VM")
-    snap = _need(pick(await s.call("list_base_vm_snapshots", {**v, "base_vm_id": vm["id"]}), "HZ_SNAPSHOT"),
-                 "HZ_SNAPSHOT on that base VM")
-    ag = _need(pick(await s.read_json_resource("horizon://config/local-access-groups"), "HZ_ACCESS_GROUP"),
-               "an access group")
-    ic = _need(pick(await s.call("list_ic_domain_accounts"), "HZ_IC_DOMAIN_ACCOUNT"),
-               "an instant clone domain account")
-
-    customization = {"instant_clone_domain_account_id": ic["id"]}
-    if os.environ.get("HZ_AD_CONTAINER"):
-        customization["ad_container_rdn"] = os.environ["HZ_AD_CONTAINER"]
-    return {
-        "name": name,
-        "display_name": name,
-        "description": "Temporary farm created by the horizon-mcp live tests. Safe to delete.",
-        "type": "AUTOMATED",
-        "access_group_id": ag["id"],
-        "automated_farm_settings": {
-            "vcenter_id": vc["id"],
-            "max_session_type": "UNLIMITED",
-            "provisioning_settings": {
-                "parent_vm_id": vm["id"],
-                "base_snapshot_id": snap["id"],
-                "datacenter_id": dc["id"],
-                "vm_folder_id": folder["id"],
-                "host_or_cluster_id": hc["id"],
-                "resource_pool_id": rp["id"],
-            },
-            "storage_settings": {"datastores": [{"datastore_id": ds["id"]}]},
-            "customization_settings": customization,
-            # 12 chars: fits the 13-char limit for {n:fixed=2}. 1 server is the API minimum.
-            "pattern_naming_settings": {"naming_pattern": f"mcplv{tag}-{{n:fixed=2}}", "max_number_of_rds_servers": 1},
-        },
-    }
+    p = await resolve_placement(s, base_vm_env="HZ_BASE_VM", snapshot_env="HZ_SNAPSHOT")
+    # 12 chars: fits the 13-char limit for {n:fixed=2}. 1 server is the API minimum.
+    return farm_spec(p, name, f"mcplv{tag}-{{n:fixed=2}}",
+                     "Temporary farm created by the horizon-mcp live tests. Safe to delete.")
 
 
 async def _find_farm(s: Session, name: str) -> dict | None:

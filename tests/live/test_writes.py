@@ -26,6 +26,7 @@ from .harness import (
     live_session,
     poll,
 )
+from .specs import APP_POOL_UPDATE_FIELDS
 
 pytestmark = pytest.mark.skipif(not WRITES, reason="Write tests are opt-in: set HZ_LIVE_WRITES=1 (lab only)")
 needs_farm = pytest.mark.skipif(not os.environ.get("HZ_TEST_FARM"),
@@ -34,15 +35,6 @@ needs_group = pytest.mark.skipif(not os.environ.get("HZ_TEST_GROUP"),
                                  reason="Set HZ_TEST_GROUP to an AD group name or SID to entitle")
 
 APP_EXECUTABLE = os.environ.get("HZ_TEST_APP_PATH", r"C:\Windows\System32\notepad.exe")
-
-# Properties ApplicationPoolUpdateSpec accepts (Horizon 2606 swagger). get_application_pool
-# returns more (id, name, farm_id, icon_ids, ...) that the PUT doesn't take.
-APP_POOL_UPDATE_FIELDS = {
-    "anti_affinity_data", "category_folder_name", "cs_restriction_tags", "description", "display_name",
-    "enable_client_restrictions", "enable_pre_launch", "enabled", "executable_path", "max_multi_sessions",
-    "multi_session_mode", "parameters", "publisher", "shortcut_locations", "start_folder",
-    "supported_file_types_data", "version",
-}
 
 
 def unique_name() -> str:
