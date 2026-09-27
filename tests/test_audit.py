@@ -176,7 +176,6 @@ def _auth_http(json_data, status_code=200):
 
 async def test_login_refresh_logout_are_logged_without_secrets(capsys, mock_mcp: MockFastMCP, monkeypatch):
     monkeypatch.setenv("HORIZON_EXPOSE_TOKENS", "true")  # even then, the log never sees tokens
-    monkeypatch.setenv("HORIZON_ACCESS_TOKEN", "restored-after-test")
     auth.register(mock_mcp)
     tools = mock_mcp.tools
     tokens = {"access_token": FAKE_TOKEN, "refresh_token": FAKE_REFRESH}
@@ -198,7 +197,7 @@ async def test_login_refresh_logout_are_logged_without_secrets(capsys, mock_mcp:
 
 
 async def test_automatic_refresh_is_logged_without_secrets(capsys, monkeypatch):
-    monkeypatch.setenv("HORIZON_ACCESS_TOKEN", "expired-" + FAKE_TOKEN)
+    client.current_session().access_token = "expired-" + FAKE_TOKEN
     client.set_refresh_token(FAKE_REFRESH)
     ok, expired = MagicMock(spec=httpx.Response), MagicMock(spec=httpx.Response)
     ok.status_code, ok.is_success, ok.content = 200, True, b""
@@ -216,4 +215,4 @@ async def test_automatic_refresh_is_logged_without_secrets(capsys, monkeypatch):
     refresh, request = map(json.loads, err.splitlines())
     assert (refresh["event"], refresh["action"], refresh["trigger"]) == ("auth", "refresh", "auto")
     assert (request["event"], request["status"], request["retried"]) == ("api_request", 200, True)
-    assert os.environ["HORIZON_ACCESS_TOKEN"] == FAKE_TOKEN
+    assert client.current_session().access_token == FAKE_TOKEN

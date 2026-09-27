@@ -19,7 +19,7 @@ This project does not yet have tagged releases; only the `main` branch is suppor
 
 A few things are by design rather than bugs, to save you a report:
 - `HORIZON_VERIFY_SSL=false` intentionally disables TLS certificate verification — it's a documented opt-in for lab use, not a default.
-- The server uses a single shared `HORIZON_ACCESS_TOKEN` for all outbound Horizon API calls. Anyone who can reach a running server instance (stdio caller, or any client of an HTTP-transport instance) has that token's full privileges. For HTTP transport, set `MCP_API_KEY` and run one server instance per user — see the README's Security Notes section.
+- In the single-user modes (stdio, or HTTP with `MCP_API_KEY`) the server uses one Horizon session for all outbound Horizon API calls, and anyone who can use that instance has that session's full privileges. To share one HTTP server between people, use multi-user mode (`MCP_USERS_FILE`), where each API key has its own Horizon session and signs in with its own account — or run one instance per person. See the README's "Multi-user HTTP" and Security Notes sections. A way for one multi-user caller to reach another's Horizon session is in scope: please report it.
 - Dependency vulnerabilities are tracked via [Dependabot alerts](https://github.com/matt-coppinger/horizon-mcp/security/dependabot) on this repo.
 
 If you're unsure whether something is in scope, report it privately anyway and we'll sort it out.

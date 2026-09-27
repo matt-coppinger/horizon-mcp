@@ -8,5 +8,12 @@ services:
       HORIZON_ACCESS_TOKEN: ${HORIZON_ACCESS_TOKEN:-}
       HORIZON_REFRESH_TOKEN: ${HORIZON_REFRESH_TOKEN:-}
       HORIZON_VERIFY_SSL: ${HORIZON_VERIFY_SSL:-true}
-      MCP_API_KEY: ${MCP_API_KEY:?set MCP_API_KEY so the endpoint isn't left unauthenticated}
+      # Set exactly one of these; the server refuses to start with neither or both.
+      # MCP_API_KEY: one shared key (single user). MCP_USERS_FILE: per-user keys
+      # (multi-user; leave the HORIZON_*_TOKEN variables unset), e.g. /config/users.json
+      # with the volume below.
+      MCP_API_KEY: ${MCP_API_KEY:-}
+      MCP_USERS_FILE: ${MCP_USERS_FILE:-}
+    # volumes:
+    #   - ./users.json:/config/users.json:ro
     restart: unless-stopped
