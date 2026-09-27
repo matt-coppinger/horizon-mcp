@@ -626,11 +626,10 @@ class FakeHorizon:
         keys = ("HORIZON_BASE_URL", "HORIZON_ACCESS_TOKEN", "HORIZON_REFRESH_TOKEN", "HORIZON_CONFIRMATION",
                 "HORIZON_AUDIT_LOG", "HORIZON_EXPOSE_TOKENS")
         saved_env = {k: os.environ.get(k) for k in keys}
-        saved_state = (hz_client._client, hz_client._refresh_token)
+        restore_client = _reset_client_state()
         for k in keys:
             os.environ.pop(k, None)
         os.environ.update(HORIZON_BASE_URL=FAKE_URL, HORIZON_CONFIRMATION="elicit", HORIZON_AUDIT_LOG=os.devnull)
-        hz_client._client, hz_client._refresh_token = None, None
         server_log = logging.getLogger("fastmcp")  # it logs a traceback for every tool error
         saved_level = server_log.level
         server_log.setLevel(logging.CRITICAL)
@@ -644,7 +643,23 @@ class FakeHorizon:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
-            hz_client._client, hz_client._refresh_token = saved_state
+            restore_client()
+
+
+def _reset_client_state():
+    """Give the server a clean single-user Horizon session store; return a function that restores it."""
+    from horizon_mcp import identity
+
+    saved_sessions = dict(hz_client._sessions)
+    saved_identity = (identity.is_multi_user(), identity.single_user_identity())
+    hz_client.configure(multi_user=False)
+
+    def restore() -> None:
+        hz_client._sessions.clear()
+        hz_client._sessions.update(saved_sessions)
+        identity.configure(multi_user=saved_identity[0], single_user=saved_identity[1])
+
+    return restore
 
 
 def offline_config(*, wait_for_session: bool = True, prefix: str = DEFAULT_PREFIX) -> Config:
